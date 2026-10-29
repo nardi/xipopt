@@ -16,34 +16,36 @@ LIBRARY_DIRECTORY = Path(__file__).resolve().parent.parent / ".xipopt.mesonpy.li
 if sys.platform == "win32":
     if LIBRARY_DIRECTORY.is_dir():
         os.add_dll_directory(str(LIBRARY_DIRECTORY))
+    else:
+        # An editable install leaves the libraries in the build tree, one directory per package.
+        build = Path(__file__).resolve().parents[2] / "build"
+        for directory in {path.parent for path in build.glob("*/subprojects/*/*.dll")}:
+            os.add_dll_directory(str(directory))
 
 os.environ.setdefault("OMP_CANCELLATION", "TRUE")
 
 
-def library_path(address: int) -> bytes | None:
-    """Returns the path of the library that holds an address, or `None` if it is unknown.
+def library_path(name: str) -> bytes | None:
+    """Returns the path of a loaded library, or `None` if it is unknown.
 
-    The native layer asks for this on Windows only, where C code has no portable way to do it.
+    The native layer asks for this on Windows only. The address of an imported function
+    there belongs to a thunk of the extension module and not to the library, so the library
+    is looked up by its file name instead.
     """
     if sys.platform == "win32":
         import ctypes
         from ctypes import wintypes
 
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel.GetModuleHandleExW.argtypes = [
-            wintypes.DWORD,
-            ctypes.c_void_p,
-            ctypes.POINTER(wintypes.HMODULE),
-        ]
+        kernel.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+        kernel.GetModuleHandleW.restype = wintypes.HMODULE
         kernel.GetModuleFileNameW.argtypes = [
             wintypes.HMODULE,
             wintypes.LPWSTR,
             wintypes.DWORD,
         ]
-        module = wintypes.HMODULE()
-        # The flags look the module up by an address in it, without counting a reference.
-        flags = 0x4 | 0x2
-        if not kernel.GetModuleHandleExW(flags, address, ctypes.byref(module)):
+        module = kernel.GetModuleHandleW(name)
+        if not module:
             return None
         buffer = ctypes.create_unicode_buffer(32768)
         if not kernel.GetModuleFileNameW(module, buffer, len(buffer)):

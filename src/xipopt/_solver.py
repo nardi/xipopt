@@ -318,7 +318,7 @@ def forward_blas() -> int:
     # The path of the library has to outlive the call, so it is kept in a local variable.
     fallback: bytes = b""
     if path == cython.NULL:  # pragma: no cover
-        found = library_path(cython.cast(cython.size_t, address))  # pragma: no cover
+        found = library_path("libopenblas.dll")  # pragma: no cover
         if found is not None:  # pragma: no cover
             fallback = found  # pragma: no cover
             path = fallback  # pragma: no cover
