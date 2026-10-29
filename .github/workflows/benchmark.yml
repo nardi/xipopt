@@ -1,0 +1,44 @@
+name: Benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The comparison needs a build without line tracing, which would slow the callbacks.
+      - name: Sync dependencies
+        run: |
+          uv sync --locked
+          uv pip install --no-config --no-deps --no-build-isolation --reinstall -e . \
+            -C setup-args=-Dcoverage=false
+
+      # cyipopt compiles against the Ipopt that Meson extracted for the wheel, so both
+      # sides of the comparison use one library.
+      - name: Build cyipopt
+        run: |
+          ipopt=$(echo subprojects/Ipopt-x86_64-linux-gnu-*)
+          PKG_CONFIG_PATH="$PWD/$ipopt/lib/pkgconfig" \
+            uv pip install --no-build-isolation --no-binary cyipopt cyipopt setuptools
+
+      - name: Compare
+        env:
+          OPENBLAS_NUM_THREADS: "1"
+        run: uv run --no-sync python benchmarks/compare.py 15 | tee comparison.md
+
+      - name: Upload the table
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparison
+          path: comparison.md

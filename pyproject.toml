@@ -101,8 +101,9 @@ select = ["E4", "E7", "E9", "F", "I"]
 "src/xipopt/_solver.py" = ["F821"]
 
 [tool.ty.src]
-# The Cython module is checked through its `.pyi` stub.
-exclude = ["src/xipopt/_solver.py"]
+# The Cython module is checked through its `.pyi` stub. The benchmarks need cyipopt, which
+# only builds against the Ipopt of the wheel.
+exclude = ["src/xipopt/_solver.py", "benchmarks"]
 
 [tool.cibuildwheel]
 # JAX publishes no wheels for 32-bit systems, so there are none for xipopt either. The wheels
