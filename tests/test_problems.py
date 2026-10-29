@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from problems import REQUIRES_ASDEX
 
 import xipopt as xip
 
@@ -111,6 +112,7 @@ def test_infinite_bounds_are_free() -> None:
     assert xip.solve(problem).x == pytest.approx(1e6, rel=1e-6)
 
 
+@REQUIRES_ASDEX
 def test_linear_problem_without_hessian_entries() -> None:
     """Checks a linear program, whose Hessian has no entries and no program."""
     problem = xip.Problem(
@@ -125,6 +127,7 @@ def test_linear_problem_without_hessian_entries() -> None:
     assert solution.statistics.hessian.calls == 0
 
 
+@REQUIRES_ASDEX
 def test_constraint_that_ignores_the_variables() -> None:
     """Checks the error for constraints with a Jacobian that has no entries."""
     problem = xip.Problem(

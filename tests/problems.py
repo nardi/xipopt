@@ -1,11 +1,19 @@
 """Optimization problems with known solutions, which the tests share."""
 
+import importlib.util
 from typing import Any, NamedTuple
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import xipopt as xip
+
+REQUIRES_ASDEX = pytest.mark.skipif(
+    importlib.util.find_spec("asdex") is None,
+    reason="asdex supports Python 3.12 and later.",
+)
+"""Skips a test that detects sparsity, which needs asdex."""
 
 
 class KnownProblem(NamedTuple):

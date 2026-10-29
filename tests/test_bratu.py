@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax.experimental import sparse
-from problems import bratu_control, bratu_pattern
+from problems import REQUIRES_ASDEX, bratu_control, bratu_pattern
 
 import xipopt as xip
 
@@ -24,6 +24,7 @@ def residual(solution: xip.Solution) -> float:
     return float(np.max(np.abs(solution.constraints[0])))
 
 
+@REQUIRES_ASDEX
 def test_detected_patterns_are_banded() -> None:
     """Checks that detection finds the three diagonals instead of a dense Jacobian."""
     compiled = xip.compile(bratu_control(SIZE))
@@ -53,12 +54,15 @@ def sparse_matrix(rows: np.ndarray, columns: np.ndarray) -> np.ndarray:
 
 
 @pytest.mark.parametrize("form", sorted(GIVEN_FORMS))
-@pytest.mark.parametrize("derivatives", [xip.Derivatives.SPARSE, xip.Derivatives.DENSE])
+@pytest.mark.parametrize(
+    "derivatives",
+    [pytest.param(xip.Derivatives.SPARSE, marks=REQUIRES_ASDEX), xip.Derivatives.DENSE],
+)
 def test_given_pattern_matches_detected(
     form: str, derivatives: xip.Derivatives
 ) -> None:
     """Checks that a pattern in any form gives the objective of the detected one."""
-    reference = solve_with(bratu_control(SIZE), xip.Derivatives.SPARSE)
+    reference = solve_with(bratu_control(SIZE), xip.Derivatives.DENSE)
     rows, columns = bratu_pattern(SIZE)
     problem = bratu_control(SIZE)._replace(
         jacobian_pattern=GIVEN_FORMS[form](rows, columns),
@@ -81,7 +85,7 @@ def test_pattern_of_asdex_is_accepted() -> None:
     pattern = asdex.SparsityPattern.from_coo(
         rows, columns, (SIZE, 2 * SIZE), input_avals=avals
     )
-    reference = solve_with(bratu_control(SIZE), xip.Derivatives.SPARSE)
+    reference = solve_with(bratu_control(SIZE), xip.Derivatives.DENSE)
     solution = solve_with(
         bratu_control(SIZE)._replace(jacobian_pattern=pattern), xip.Derivatives.SPARSE
     )
@@ -103,6 +107,7 @@ def test_hessian_pattern_may_list_the_upper_triangle() -> None:
     assert xip.solve(compiled).status.succeeded
 
 
+@REQUIRES_ASDEX
 def test_bounds_on_a_larger_problem() -> None:
     """Checks that a problem with a few hundred variables solves with sparse derivatives."""
     solution = xip.solve(bratu_control(150))
