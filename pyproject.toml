@@ -29,6 +29,11 @@ requires = [
 ]
 build-backend = "mesonpy"
 
+[tool.meson-python]
+# Windows has no run path, so `xipopt._libraries` adds the directory of the bundled DLLs to the
+# search path of the loader.
+allow-windows-internal-shared-libs = true
+
 [tool.meson-python.args]
 # CPython on Windows needs extension modules from MSVC, and the runners also have MinGW on
 # the path, which Meson would pick otherwise. The option does nothing on other systems.
@@ -83,7 +88,7 @@ patch = ["subprocess"]
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
-exclude_also = ["if TYPE_CHECKING:", "raise AssertionError", "@overload"]
+exclude_also = ["if TYPE_CHECKING:", "raise AssertionError", "@overload", "if sys.platform == .win32.:"]
 
 [tool.ruff.lint]
 ignore = ["F722"]
@@ -96,3 +101,14 @@ select = ["E4", "E7", "E9", "F", "I"]
 [tool.ty.src]
 # The Cython module is checked through its `.pyi` stub.
 exclude = ["src/xipopt/_solver.py"]
+
+[tool.cibuildwheel]
+# JAX publishes no wheels for 32-bit systems, so there are none for xipopt either. The wheels
+# target glibc, because the PJRT CPU plugin has no musl build.
+build = "cp311-* cp312-* cp313-* cp314-*"
+skip = "*-musllinux_* *-win32 *-win_arm64"
+test-command = "python {project}/scripts/smoke_test.py"
+
+[tool.cibuildwheel.macos]
+# The JLL libraries for macOS target this release or later.
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }

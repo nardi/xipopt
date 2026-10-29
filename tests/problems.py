@@ -61,9 +61,7 @@ def hs035() -> KnownProblem:
         variables=xip.Variable(lower=0.0, shape=(3,)),
         objective=objective,
         constraints=(
-            xip.Constraint(
-                lambda x, params: x[0] + x[1] + 2.0 * x[2], upper=3.0
-            ),
+            xip.Constraint(lambda x, params: x[0] + x[1] + 2.0 * x[2], upper=3.0),
         ),
     )
     return KnownProblem(
@@ -82,9 +80,7 @@ def hs021() -> KnownProblem:
             lower=np.array([2.0, -50.0]), upper=np.array([50.0, 50.0])
         ),
         objective=lambda x, params: 0.01 * x[0] ** 2 + x[1] ** 2 - 100.0,
-        constraints=(
-            xip.Constraint(lambda x, params: 10.0 * x[0] - x[1], lower=10.0),
-        ),
+        constraints=(xip.Constraint(lambda x, params: 10.0 * x[0] - x[1], lower=10.0),),
     )
     return KnownProblem(
         "hs021", problem, np.array([-1.0, 1.0]), -99.96, np.array([2.0, 0.0])
@@ -111,9 +107,7 @@ def hs014() -> KnownProblem:
         variables=xip.Variable(shape=(2,)),
         objective=lambda x, params: (x[0] - 2.0) ** 2 + (x[1] - 1.0) ** 2,
         constraints=(
-            xip.Constraint(
-                lambda x, params: x[0] - 2.0 * x[1], lower=-1.0, upper=-1.0
-            ),
+            xip.Constraint(lambda x, params: x[0] - 2.0 * x[1], lower=-1.0, upper=-1.0),
             xip.Constraint(
                 lambda x, params: -(x[0] ** 2) / 4.0 - x[1] ** 2 + 1.0, lower=0.0
             ),
@@ -145,9 +139,10 @@ def bratu_control(size: int, coupling: float = 1.0) -> xip.Problem:
     target = 0.5 * grid * (1.0 - grid)
 
     def objective(x, params):
-        return jnp.sum((x["u"] - target) ** 2) * spacing + 1e-2 * jnp.sum(
-            x["c"] ** 2
-        ) * spacing
+        return (
+            jnp.sum((x["u"] - target) ** 2) * spacing
+            + 1e-2 * jnp.sum(x["c"] ** 2) * spacing
+        )
 
     def equation(x, params):
         u = x["u"]

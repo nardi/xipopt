@@ -54,7 +54,9 @@ def sparse_matrix(rows: np.ndarray, columns: np.ndarray) -> np.ndarray:
 
 @pytest.mark.parametrize("form", sorted(GIVEN_FORMS))
 @pytest.mark.parametrize("derivatives", [xip.Derivatives.SPARSE, xip.Derivatives.DENSE])
-def test_given_pattern_matches_detected(form: str, derivatives: xip.Derivatives) -> None:
+def test_given_pattern_matches_detected(
+    form: str, derivatives: xip.Derivatives
+) -> None:
     """Checks that a pattern in any form gives the objective of the detected one."""
     reference = solve_with(bratu_control(SIZE), xip.Derivatives.SPARSE)
     rows, columns = bratu_pattern(SIZE)

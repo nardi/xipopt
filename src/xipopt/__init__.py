@@ -1,5 +1,8 @@
 """Ipopt for JAX functions, called through the PJRT C API."""
 
+# This import comes first because it prepares the search path for the libraries that the
+# extension module loads.
+from xipopt import _libraries  # noqa: F401
 from xipopt._compile import CompiledProblem, compile  # noqa: A004
 from xipopt._options import (
     CompileOptions,
