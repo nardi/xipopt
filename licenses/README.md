@@ -1,8 +1,8 @@
 # Licenses of bundled libraries
 
-The wheels of xipopt contain shared libraries from the Julia binary builders. The license
-of xipopt itself is in `LICENSE.md` of the repository. The libraries keep their own
-licenses, and this directory holds a copy of each.
+The wheels of xipopt contain shared libraries from the Julia binary builders. The
+license of xipopt itself is in `LICENSE.md` of the repository. The libraries keep their
+own licenses, and this directory holds a copy of each.
 
 | Library | License | File |
 | --- | --- | --- |
