@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+wheelhouse/
+*.egg-info
+
+# Virtual environments
+.venv*
+
+# Documentation build output
+site/
+
+# Test and benchmark output
+.benchmarks/
+.coverage
+.coverage.*
+coverage.xml
+.hypothesis/
+
+# Meson extracts the subprojects from the lock file on configure, so only the lock is tracked.
+/subprojects/*
+!/subprojects/meson-jll.lock.wrap
+
+# Coverage builds copy the generated C files next to the Cython sources.
+/src/xipopt/*.c

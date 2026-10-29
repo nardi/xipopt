@@ -1,0 +1,33 @@
+project(
+  'xipopt',
+  'c',
+  version: '0.0.1',
+  meson_version: '>=1.8',
+  default_options: ['c_std=c11', 'buildtype=release', 'b_ndebug=if-release'],
+)
+
+python = import('python').find_installation(pure: false)
+cython = find_program('cython')
+
+# Ipopt and its dependencies come from JLL packages through wraps in `subprojects`. Only the
+# lock file is committed, so `meson-jll` writes the wraps from it before anything reads them.
+meson_jll = find_program('meson-jll')
+run_command(meson_jll, 'sync', check: true)
+
+ipopt = dependency('Ipopt_jll')
+
+# Ipopt calls BLAS and LAPACK through libblastrampoline, which has no backend until one is
+# forwarded to it. OpenBLAS is linked in so the extension can forward it on import.
+openblas = dependency('OpenBLAS32_jll')
+lbt = dependency('libblastrampoline_jll')
+
+# The PJRT C API header and the declarations of the cyxla runtime come with the installed
+# cyxla. The first directory holds the header, the second the `.pxd` files.
+cyxla_include = run_command(
+  python, '-c', 'import cyxla; print("\\n".join(cyxla.get_include()))', check: true,
+).stdout().strip().split('\n')
+# A virtual environment inside the source tree puts cyxla there too, which
+# `include_directories` refuses, so the directory goes in as a compiler argument.
+cyxla = declare_dependency(compile_args: ['-I' + cyxla_include[0]])
+
+subdir('src/xipopt')

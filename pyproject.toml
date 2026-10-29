@@ -1,0 +1,98 @@
+[project]
+name = "xipopt"
+version = "0.0.1"
+description = "Ipopt for JAX functions, called through the PJRT C API"
+readme = "README.md"
+authors = [{ name = "Nardi Lam", email = "mail@nardilam.nl" }]
+requires-python = ">=3.11"
+license-files = ["LICENSE.md", "licenses/*"]
+dependencies = [
+    # asdex supports Python 3.12 and later, so Python 3.11 evaluates dense derivatives.
+    "asdex>=0.5.2; python_version >= '3.12'",
+    "cyxla[cpu]>=0.1,<0.2",
+    "jax>=0.10,<0.12",
+    "jaxtyping>=0.2",
+    "numpy>=1.26",
+]
+
+[project.urls]
+Source = "https://github.com/nardi/xipopt"
+Documentation = "https://nardi.github.io/xipopt/"
+
+[build-system]
+requires = [
+    "meson-python>=0.18",
+    "meson>=1.8",
+    "cython>=3.1",
+    "cyxla>=0.1,<0.2",
+    "patchelf; sys_platform == 'linux'",
+]
+build-backend = "mesonpy"
+
+[tool.meson-python.args]
+# CPython on Windows needs extension modules from MSVC, and the runners also have MinGW on
+# the path, which Meson would pick otherwise. The option does nothing on other systems.
+# Stripping removes the debug information that the JLL libraries ship with, which is most of
+# their size.
+setup = ["--vsenv", "-Dstrip=true"]
+
+[dependency-groups]
+dev = [
+    "markdown-pytest>=0.6.6",
+    "pytest>=9.1.0",
+    "pytest-cov>=7",
+    "scipy>=1.11",
+    "ruff>=0.15.17",
+    "ty>=0.0.59",
+]
+# An editable meson-python install rebuilds the extension module on import, so the build
+# tools have to live in the environment itself rather than in an isolated one.
+build = [
+    "meson-python>=0.18",
+    "meson>=1.8",
+    "ninja>=1.11",
+    "cython>=3.1",
+    "patchelf; sys_platform == 'linux'",
+]
+# The documentation site. The API reference reads the source, so it needs no build.
+docs = ["zensical>=0.0.73", "mkdocstrings-python>=2"]
+
+[tool.uv]
+default-groups = ["build", "dev"]
+no-build-isolation-package = ["xipopt"]
+# Development builds trace lines in the Cython module, so its coverage is measured as well.
+config-settings = { setup-args = "-Dcoverage=true" }
+
+[tool.uv.sources]
+# This asdex commit fixes an empty sparsity pattern for functions that contain a
+# `jnp.where`. Released versions up to 0.5.2 have the bug.
+asdex = { git = "https://github.com/adrhill/asdex", rev = "da130b048b72c03e5ac1cb154968797bc32868b8", marker = "python_version >= '3.12'" }
+
+[tool.pytest.ini_options]
+# The README and the documentation are collected by markdown-pytest, which runs code
+# blocks marked with a `<!-- name: test_... -->` comment.
+testpaths = ["tests", "README.md", "docs"]
+
+[tool.coverage.run]
+branch = true
+source = ["xipopt"]
+plugins = ["Cython.Coverage"]
+# Tests of an uninitialized runtime run in subprocesses, which coverage measures too.
+patch = ["subprocess"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise AssertionError", "@overload"]
+
+[tool.ruff.lint]
+ignore = ["F722"]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Names from `cython.cimports` are declared in `.pxd` files that ruff does not read.
+"src/xipopt/_solver.py" = ["F821"]
+
+[tool.ty.src]
+# The Cython module is checked through its `.pyi` stub.
+exclude = ["src/xipopt/_solver.py"]
