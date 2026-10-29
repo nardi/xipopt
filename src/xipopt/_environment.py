@@ -23,6 +23,14 @@ if sys.platform == "win32":
             os.add_dll_directory(str(directory))
 
 os.environ.setdefault("OMP_CANCELLATION", "TRUE")
+if sys.platform == "win32":
+    # The OpenMP runtime of the bundled libraries reads the environment through the old C
+    # runtime of Windows, which keeps a copy of its own that `os.environ` does not update.
+    import ctypes
+
+    ctypes.CDLL("msvcrt")._putenv_s(
+        b"OMP_CANCELLATION", os.environ["OMP_CANCELLATION"].encode()
+    )
 
 
 def library_path(name: str) -> bytes | None:

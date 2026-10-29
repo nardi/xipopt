@@ -1,5 +1,6 @@
 """Tests of the options, the callback and the warm start of a solve."""
 
+import sys
 import threading
 
 import jax.numpy as jnp
@@ -77,7 +78,9 @@ def test_settings_of_the_caller_come_last(
         blas_threads=None,
     )
     xip.solve(compiled, START, options=options)
-    assert "iter" in capfd.readouterr().out
+    # Ipopt buffers its output in the C++ runtime of Windows until the process ends.
+    if sys.platform != "win32":
+        assert "iter" in capfd.readouterr().out
 
 
 def test_rejected_settings_raise(compiled: xip.CompiledProblem) -> None:

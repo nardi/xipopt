@@ -157,13 +157,22 @@ def test_dense_derivatives_without_asdex_warn(monkeypatch: pytest.MonkeyPatch) -
     np.testing.assert_allclose(solution.x, 1.0, atol=1e-6)
 
 
-def linear_system_problem() -> xip.Problem:
-    """Returns a problem whose objective solves a linear system, which asdex cannot trace."""
+def root_problem() -> xip.Problem:
+    """Returns a problem whose objective is a root, which asdex cannot trace."""
+
+    def cube_root(x):
+        return jax.lax.custom_root(
+            lambda y: y**3 - x,
+            jnp.ones_like(x),
+            lambda f, y0: jax.lax.fori_loop(
+                0, 30, lambda _, y: y - f(y) / (3.0 * y**2), y0
+            ),
+            lambda g, y: y / g(jnp.ones_like(y)),
+        )
+
     return xip.Problem(
         variables=xip.Variable(lower=0.5, upper=2.0, shape=(3,)),
-        objective=lambda x, params: jnp.sum(
-            jnp.linalg.solve(jnp.diag(x) + jnp.eye(3), jnp.ones(3)) + x**2
-        ),
+        objective=lambda x, params: jnp.sum(cube_root(x) + x**2),
     )
 
 
@@ -171,9 +180,7 @@ def test_detection_failure_names_the_ways_out() -> None:
     """Checks the error for a function whose sparsity asdex cannot detect."""
     pytest.importorskip("asdex")
     with pytest.raises(xip.SparsityDetectionError) as error:
-        xip.compile(
-            linear_system_problem(), options=xip.CompileOptions(disk_cache=False)
-        )
+        xip.compile(root_problem(), options=xip.CompileOptions(disk_cache=False))
     assert "Derivatives.DENSE" in str(error.value)
     assert "LIMITED_MEMORY" in str(error.value)
 
@@ -187,6 +194,6 @@ def test_detection_failure_names_the_ways_out() -> None:
 )
 def test_ways_out_of_a_detection_failure_work(options: xip.CompileOptions) -> None:
     """Checks that dense derivatives and a limited-memory Hessian solve the same problem."""
-    solution = xip.solve(linear_system_problem(), compile_options=options)
+    solution = xip.solve(root_problem(), compile_options=options)
     assert solution.status.succeeded
     np.testing.assert_allclose(solution.x, 0.5, atol=1e-5)
