@@ -3,7 +3,7 @@ python.install_sources(
   '_cache.py',
   '_compile.py',
   '_layout.py',
-  '_libraries.py',
+  '_environment.py',
   '_options.py',
   '_patterns.py',
   '_problem_types.py',

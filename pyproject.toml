@@ -27,10 +27,12 @@ requires = [
     "cyxla>=0.1,<0.2",
     "patchelf; sys_platform == 'linux'",
 ]
-build-backend = "mesonpy"
+# This wraps meson-python, as `build_backend/xipopt_build.py` explains.
+build-backend = "xipopt_build"
+backend-path = ["build_backend"]
 
 [tool.meson-python]
-# Windows has no run path, so `xipopt._libraries` adds the directory of the bundled DLLs to the
+# Windows has no run path, so `xipopt._environment` adds the directory of the bundled DLLs to the
 # search path of the loader.
 allow-windows-internal-shared-libs = true
 

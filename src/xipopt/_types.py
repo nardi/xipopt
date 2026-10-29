@@ -3,6 +3,9 @@
 from enum import IntEnum
 from typing import NamedTuple
 
+import numpy as np
+from jaxtyping import PyTree
+
 
 class Sense(IntEnum):
     """Direction of optimization."""
@@ -112,5 +115,5 @@ class IterationInfo(NamedTuple):
     dual_step_size: float
     primal_step_size: float
     line_search_trials: int
-    x: object
+    x: PyTree[np.ndarray]
     """The current iterate in the structure of the variables."""

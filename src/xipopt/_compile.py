@@ -118,6 +118,11 @@ def build(
             cyxla.store_lowered(key, lowered)
             _cache.store_structure(key, structure)
 
+    if constraint_size > 0 and structure.jacobian_rows.size == 0:
+        raise ValueError(
+            "The constraints do not depend on the variables, so their Jacobian has no "
+            "entries, which Ipopt does not accept."
+        )
     executables, compile_statistics = compile_programs(lowered, options)
     check_output_sizes(executables, n, constraint_size, structure)
     lower_bound, upper_bound = constraint_bounds(problem, functions.constraint_shapes)
