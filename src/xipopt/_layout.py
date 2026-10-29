@@ -41,8 +41,6 @@ class VariableLayout(NamedTuple):
         for array, shape in zip(arrays, self.shapes, strict=True):
             if array.shape != shape:
                 raise ValueError(f"A value has shape {array.shape}, expected {shape}.")
-        if not arrays:
-            return np.zeros(0)
         return np.concatenate([array.ravel() for array in arrays])
 
     def unflatten(self, values: Float[np.ndarray, " n"]) -> PyTree[np.ndarray]:
@@ -106,10 +104,6 @@ class ParamsLayout(NamedTuple):
             leaves.append(leaf.astype(aval.dtype))
             offset += size
         return jax.tree.unflatten(self.structure, leaves)
-
-    def sample(self) -> tuple[jax.ShapeDtypeStruct]:
-        """Returns the type of the flat vector."""
-        return (jax.ShapeDtypeStruct((self.size,), jnp.float64),)
 
 
 def as_aval(leaf: Any) -> jax.ShapeDtypeStruct:

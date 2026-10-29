@@ -40,11 +40,6 @@ class CompiledProblem(NamedTuple):
     """Where the Jacobian and the Hessian have entries, in the order of their values."""
     statistics: BuildStatistics
 
-    @property
-    def constraint_size(self) -> int:
-        """Number of scalar constraints."""
-        return sum(int(np.prod(shape)) for shape in self.constraint_shapes)
-
 
 def compile(  # noqa: A001
     problem: Problem,

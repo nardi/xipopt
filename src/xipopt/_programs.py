@@ -175,7 +175,8 @@ def load_asdex(options: CompileOptions) -> Any | None:
             import asdex
 
             return asdex
-        case Derivatives.AUTOMATIC:
+        case _:
+            # Automatic selection, which uses asdex when it can.
             if asdex_installed():
                 import asdex
 

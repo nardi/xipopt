@@ -16,11 +16,6 @@ class Entries(NamedTuple):
     columns: Int[np.ndarray, " nnz"]
     shape: tuple[int, int]
 
-    @property
-    def size(self) -> int:
-        """Number of entries."""
-        return self.rows.shape[0]
-
 
 def entries_from_coordinates(
     rows: Any, columns: Any, shape: tuple[int, int]
@@ -45,6 +40,12 @@ def entries_from_coordinates(
     )
 
 
+def check_shape(actual: tuple[int, ...], expected: tuple[int, int]) -> None:
+    """Raises a `ValueError` unless a pattern has the shape of the matrix it describes."""
+    if tuple(actual) != expected:
+        raise ValueError(f"A pattern has shape {tuple(actual)}, expected {expected}.")
+
+
 def as_entries(pattern: Pattern, shape: tuple[int, int]) -> Entries:
     """Returns the entries of a pattern in any of the accepted forms.
 
@@ -52,27 +53,18 @@ def as_entries(pattern: Pattern, shape: tuple[int, int]) -> Entries:
     """
     match pattern:
         case jax_sparse.BCOO():
-            if tuple(pattern.shape) != shape:
-                raise ValueError(
-                    f"A pattern has shape {tuple(pattern.shape)}, expected {shape}."
-                )
+            check_shape(pattern.shape, shape)
             indices = np.asarray(pattern.indices).reshape(-1, 2)
             return entries_from_coordinates(indices[:, 0], indices[:, 1], shape)
         case (rows, columns) if isinstance(pattern, tuple):
             return entries_from_coordinates(rows, columns, shape)
         case _ if hasattr(pattern, "rows") and hasattr(pattern, "cols"):
             # An `asdex.SparsityPattern`, which is not imported because asdex is optional.
-            if tuple(pattern.shape) != shape:
-                raise ValueError(
-                    f"A pattern has shape {tuple(pattern.shape)}, expected {shape}."
-                )
+            check_shape(pattern.shape, shape)
             return entries_from_coordinates(pattern.rows, pattern.cols, shape)
         case _:
             matrix = np.asarray(pattern)
-            if matrix.shape != shape:
-                raise ValueError(
-                    f"A pattern has shape {matrix.shape}, expected {shape}."
-                )
+            check_shape(matrix.shape, shape)
             rows, columns = np.nonzero(matrix)
             return entries_from_coordinates(rows, columns, shape)
 

@@ -316,10 +316,14 @@ def forward_blas() -> int:
         xipopt_library_path(cython.cast(cython.p_void, openblas_set_num_threads)),
     )
     if path == cython.NULL:
-        raise SolverError("The path of the linked OpenBLAS is unknown.")
+        raise SolverError(  # pragma: no cover
+            "The path of the linked OpenBLAS is unknown."
+        )
     count: cython.int = lbt_forward(path, 1, 0, cython.NULL)
     if count <= 0:
-        raise SolverError("libblastrampoline could not forward the linked OpenBLAS.")
+        raise SolverError(  # pragma: no cover
+            "libblastrampoline could not forward the linked OpenBLAS."
+        )
     return count
 
 

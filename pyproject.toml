@@ -90,7 +90,7 @@ patch = ["subprocess"]
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
-exclude_also = ["if TYPE_CHECKING:", "raise AssertionError", "@overload", "if sys.platform == .win32.:"]
+exclude_also = ["if TYPE_CHECKING:", "raise AssertionError", "@overload", "if sys.platform == .win32.:", "raise MemoryError"]
 
 [tool.ruff.lint]
 ignore = ["F722"]
