@@ -17,7 +17,8 @@ pip install xipopt
 ```
 
 The wheels contain Ipopt with the MUMPS and SPRAL linear solvers, so nothing else needs
-installing. They exist for Linux, macOS and Windows on Python 3.11 and later.
+installing. They exist for Linux, macOS on Apple silicon and Windows, on Python 3.11 and
+later.
 
 ## Example
 

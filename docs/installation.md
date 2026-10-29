@@ -4,10 +4,11 @@
 pip install xipopt
 ```
 
-xipopt needs Python 3.11 or newer. Wheels exist for Linux (x86-64 and arm64), macOS
-(Intel and Apple silicon) and Windows (x86-64). They contain Ipopt 3.14 with the sparse
-linear solvers MUMPS and SPRAL, OpenBLAS and the runtime libraries of the compiler, so
-the system needs no Ipopt or BLAS. [cyxla](https://nardi.github.io/cyxla/) and its CPU
+xipopt needs Python 3.11 or newer. Wheels exist for Linux (x86-64 and arm64), macOS on
+Apple silicon and Windows (x86-64). JAX publishes no recent wheels for Intel Macs, so
+there are none for xipopt either. The wheels contain Ipopt 3.14 with the sparse linear
+solvers MUMPS and SPRAL, OpenBLAS and the runtime libraries of the compiler, so the
+system needs no Ipopt or BLAS. [cyxla](https://nardi.github.io/cyxla/) and its CPU
 plugin come as dependencies, which means nothing downloads at run time.
 
 ## Python versions

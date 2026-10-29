@@ -62,6 +62,8 @@ from cython.cimports.xipopt._solver import (
     SolverState,
 )
 
+from xipopt._environment import library_path
+
 cyxla.check_abi(ABI_VERSION)
 
 SOLVE_LOCK = threading.Lock()
@@ -311,10 +313,15 @@ def forward_blas() -> int:
     The library path comes from the loaded OpenBLAS, so it does not depend on environment
     variables or install locations.
     """
-    path: cython.p_char = cython.cast(
-        cython.p_char,
-        xipopt_library_path(cython.cast(cython.p_void, openblas_set_num_threads)),
-    )
+    address: cython.p_void = cython.cast(cython.p_void, openblas_set_num_threads)
+    path: cython.p_char = cython.cast(cython.p_char, xipopt_library_path(address))
+    # The path of the library has to outlive the call, so it is kept in a local variable.
+    fallback: bytes = b""
+    if path == cython.NULL:  # pragma: no cover
+        found = library_path(cython.cast(cython.size_t, address))  # pragma: no cover
+        if found is not None:  # pragma: no cover
+            fallback = found  # pragma: no cover
+            path = fallback  # pragma: no cover
     if path == cython.NULL:
         raise SolverError(  # pragma: no cover
             "The path of the linked OpenBLAS is unknown."

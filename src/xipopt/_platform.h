@@ -1,24 +1,16 @@
-/* The operating system calls of the extension modules, so the rest of the code is portable. */
+/* The operating system calls of the extension module, so the rest of the code is portable. */
 #ifndef XIPOPT_PLATFORM_H
 #define XIPOPT_PLATFORM_H
 
 #ifdef _WIN32
-#include <windows.h>
-
-/* Returns the path of the library that holds an address, or NULL if there is none. */
+/*
+ * Windows has no `dladdr`, and `windows.h` cannot be included here: the include directories
+ * of the bundled libraries come first, and the one of hwloc has a header of that name. The
+ * Python side finds the path of a library by an address with `ctypes` instead.
+ */
 static const char* xipopt_library_path(const void* address) {
-  static char path[MAX_PATH];
-  HMODULE module = NULL;
-  if (!GetModuleHandleExA(
-          GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-              GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-          (LPCSTR)address, &module)) {
-    return NULL;
-  }
-  if (GetModuleFileNameA(module, path, MAX_PATH) == 0) {
-    return NULL;
-  }
-  return path;
+  (void)address;
+  return NULL;
 }
 #else
 #include <dlfcn.h>
