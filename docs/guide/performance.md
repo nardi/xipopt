@@ -11,8 +11,8 @@ any Ipopt interface.
 [cyipopt](https://github.com/mechmotum/cyipopt), which calls Python functions from the
 same Ipopt. The script gives cyipopt the jitted versions of the same JAX functions and
 the same sparsity structure, uses MUMPS and one BLAS thread on both sides, and sets the
-tolerance to `1e-8`. Both sides then make the same iterations and callbacks. The table
-shows the median of 15 solves after a warm-up solve, without the time to compile or jit.
+tolerance to `1e-8`. Both sides then make the same iterations and callbacks. The tables
+show the median of 15 solves after a warm-up solve, without the time to compile or jit.
 
 | Problem | Variables | Iterations | cyipopt | xipopt | Ratio |
 | --- | --- | --- | --- | --- | --- |
@@ -22,11 +22,22 @@ shows the median of 15 solves after a warm-up solve, without the time to compile
 | Bratu control | 200 | 2 | 4.1 ms | 2.1 ms | 1.9x |
 | Bratu control | 2000 | 2 | 8.6 ms | 6.4 ms | 1.3x |
 
-The machine was a shared virtual machine with four cores of an Intel Xeon at 2.1 GHz, so
-treat differences below 10% as noise. The problems converge in a handful of iterations,
-which makes the callbacks a large share of the time. The advantage shrinks as the
-problem grows, because the factorization takes over. Run the script on your own hardware
-and problems to see where yours falls:
+The same script on a GitHub Actions runner (`benchmark.yml`, Ubuntu with four cores)
+gives smaller gaps:
+
+| Problem | Variables | Iterations | cyipopt | xipopt | Ratio |
+| --- | --- | --- | --- | --- | --- |
+| Problem 71 of Hock and Schittkowski | 4 | 8 | 1.8 ms | 1.2 ms | 1.5x |
+| Chained Rosenbrock, equality constraints | 100 | 6 | 2.6 ms | 1.6 ms | 1.6x |
+| Chained Rosenbrock, equality constraints | 1000 | 6 | 8.3 ms | 7.0 ms | 1.2x |
+| Bratu control | 200 | 2 | 1.3 ms | 1.1 ms | 1.1x |
+| Bratu control | 2000 | 2 | 4.4 ms | 4.0 ms | 1.1x |
+
+The first table comes from a shared virtual machine with four cores of an Intel Xeon at
+2.1 GHz, so treat differences below 10% as noise. The problems converge in a handful of
+iterations, which makes the callbacks a large share of the time. The advantage shrinks
+as the problem grows, because the factorization takes over. Run the script on your own
+hardware and problems to see where yours falls:
 
 ```bash
 uv pip install setuptools
