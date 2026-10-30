@@ -9,7 +9,7 @@ license-files = ["LICENSE.md", "licenses/*"]
 dependencies = [
     # Version 0.5.2 of asdex needs Python 3.12 and JAX 0.11, so Python 3.11 gets 0.5.1.
     "asdex>=0.5.1",
-    "cyxla[cpu]>=0.1,<0.2",
+    "cyxla[cpu]>=0.1.1,<0.2",
     "jax>=0.10,<0.12",
     "jaxtyping>=0.2",
     "numpy>=1.26",
@@ -24,7 +24,7 @@ requires = [
     "meson-python>=0.18",
     "meson>=1.8",
     "cython>=3.1",
-    "cyxla>=0.1,<0.2",
+    "cyxla>=0.1.1,<0.2",
     "patchelf; sys_platform == 'linux'",
 ]
 # This wraps meson-python, as `build_backend/xipopt_build.py` explains.

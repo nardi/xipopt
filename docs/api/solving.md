@@ -6,6 +6,14 @@
 
 ::: xipopt.solve
 
+::: xipopt.save
+
+::: xipopt.load
+
+::: xipopt.dumps
+
+::: xipopt.loads
+
 ::: xipopt.SparsityDetectionError
 
 ::: xipopt.ipopt_version

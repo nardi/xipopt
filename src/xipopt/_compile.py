@@ -2,7 +2,7 @@
 
 import time
 from collections.abc import Sequence
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Never
 
 import cyxla
 import jax
@@ -22,23 +22,39 @@ from xipopt._options import CompileOptions, Hessian
 from xipopt._patterns import as_entries
 from xipopt._problem_types import Problem
 from xipopt._solver import NativeProblem
-from xipopt._types import BuildStatistics, Program
+from xipopt._types import BuildStatistics, Program, Sense
 
 
 class CompiledProblem(NamedTuple):
     """A problem whose functions are compiled, ready to solve."""
 
-    problem: Problem
+    problem: Problem | None
+    """The problem that was compiled, or `None` for one that `load` returned."""
     options: CompileOptions
+    sense: Sense
     variables: VariableLayout
     params: ParamsLayout
     constraint_shapes: tuple[tuple[int, ...], ...]
     """The shape of the output of each constraint."""
+    constraint_lower: Float[np.ndarray, " m"]
+    constraint_upper: Float[np.ndarray, " m"]
     native: NativeProblem
     """The compiled programs with the buffers that Ipopt's callbacks share."""
     structure: _cache.Structure
     """Where the Jacobian and the Hessian have entries, in the order of their values."""
     statistics: BuildStatistics
+
+    def __reduce__(self) -> Never:
+        """Refuses to pickle, since a compiled problem holds native buffers.
+
+        `xipopt.dumps` and `xipopt.loads` move a compiled problem between processes. The
+        trees of the variables and parameters are not part of the file, so unpickling could
+        not return a problem that is ready to use.
+        """
+        raise TypeError(
+            "A compiled problem cannot be pickled. Use xipopt.dumps to get bytes, and "
+            "xipopt.loads with the variables and parameters to read them."
+        )
 
 
 def compile(  # noqa: A001
@@ -121,25 +137,18 @@ def build(
     executables, compile_statistics = compile_programs(lowered, options)
     check_output_sizes(executables, n, constraint_size, structure)
     lower_bound, upper_bound = constraint_bounds(problem, functions.constraint_shapes)
-    native = NativeProblem(
-        executables,
-        variables.lower,
-        variables.upper,
-        lower_bound,
-        upper_bound,
-        layout.size,
-        structure.jacobian_rows,
-        structure.jacobian_columns,
-        structure.hessian_rows,
-        structure.hessian_columns,
-        options.zero_copy,
+    native = make_native(
+        executables, variables, layout, lower_bound, upper_bound, structure, options
     )
     return CompiledProblem(
         problem=problem,
         options=options,
+        sense=problem.sense,
         variables=variables,
         params=layout,
         constraint_shapes=functions.constraint_shapes,
+        constraint_lower=lower_bound,
+        constraint_upper=upper_bound,
         native=native,
         structure=structure,
         statistics=_cache.combine(
@@ -149,6 +158,31 @@ def build(
             lowered_count,
             time.perf_counter() - start,
         ),
+    )
+
+
+def make_native(
+    executables: Sequence[Executable | None],
+    variables: VariableLayout,
+    layout: ParamsLayout,
+    constraint_lower: Float[np.ndarray, " m"],
+    constraint_upper: Float[np.ndarray, " m"],
+    structure: _cache.Structure,
+    options: CompileOptions,
+) -> NativeProblem:
+    """Returns the native problem for compiled programs, bounds and a sparsity structure."""
+    return NativeProblem(
+        executables,
+        variables.lower,
+        variables.upper,
+        constraint_lower,
+        constraint_upper,
+        layout.size,
+        structure.jacobian_rows,
+        structure.jacobian_columns,
+        structure.hessian_rows,
+        structure.hessian_columns,
+        options.zero_copy,
     )
 
 

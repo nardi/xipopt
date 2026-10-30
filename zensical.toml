@@ -14,6 +14,7 @@ nav = [
     { "Parameters and warm starts" = "guide/parameters.md" },
     { "Derivatives and sparsity" = "guide/derivatives.md" },
     { "Options and callbacks" = "guide/options.md" },
+    { "Saving and loading" = "guide/saving.md" },
     { "Performance" = "guide/performance.md" },
   ] },
   { "Design" = "design.md" },

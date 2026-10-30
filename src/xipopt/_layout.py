@@ -3,6 +3,7 @@
 import math
 from typing import Any, NamedTuple
 
+import cyxla
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -23,6 +24,8 @@ class VariableLayout(NamedTuple):
     """Position of each leaf's first entry in the flat vector."""
     lower: Float[np.ndarray, " n"]
     upper: Float[np.ndarray, " n"]
+    fingerprint: tuple[cyxla.LeafInfo, ...]
+    """The path and shape of every leaf, which a tree given to `load` has to match."""
 
     @property
     def size(self) -> int:
@@ -69,6 +72,8 @@ class ParamsLayout(NamedTuple):
 
     structure: jax.tree_util.PyTreeDef
     avals: tuple[jax.ShapeDtypeStruct, ...]
+    fingerprint: tuple[cyxla.LeafInfo, ...]
+    """The path and shape of every leaf, which a tree given to `load` has to match."""
 
     @property
     def size(self) -> int:
@@ -117,7 +122,18 @@ def as_aval(leaf: Any) -> jax.ShapeDtypeStruct:
 def params_layout(params: PyTree[Any]) -> ParamsLayout:
     """Returns the layout of parameters, which may be arrays or `jax.ShapeDtypeStruct`s."""
     leaves, structure = jax.tree.flatten(params)
-    return ParamsLayout(structure, tuple(as_aval(leaf) for leaf in leaves))
+    avals = tuple(as_aval(leaf) for leaf in leaves)
+    fingerprint = cyxla.tree_fingerprint(params, lambda leaf: as_aval(leaf).shape)
+    return ParamsLayout(structure, avals, fingerprint)
+
+
+def leaf_shape(leaf: Any) -> tuple[int, ...]:
+    """Returns the shape of a leaf of the variables, which is a `Variable` or an array."""
+    if is_variable(leaf):
+        return np.broadcast_shapes(
+            leaf.shape, np.shape(leaf.lower), np.shape(leaf.upper)
+        )
+    return tuple(np.shape(leaf))
 
 
 def variable_layout(variables: PyTree[Any]) -> VariableLayout:
@@ -133,9 +149,7 @@ def variable_layout(variables: PyTree[Any]) -> VariableLayout:
             raise TypeError(
                 f"Every leaf of the variables must be a Variable, not {leaf!r}."
             )
-        shape = np.broadcast_shapes(
-            leaf.shape, np.shape(leaf.lower), np.shape(leaf.upper)
-        )
+        shape = leaf_shape(leaf)
         lower = np.broadcast_to(np.asarray(leaf.lower, np.float64), shape).ravel()
         upper = np.broadcast_to(np.asarray(leaf.upper, np.float64), shape).ravel()
         if np.any(lower > upper):
@@ -153,4 +167,32 @@ def variable_layout(variables: PyTree[Any]) -> VariableLayout:
         offsets=tuple(offsets),
         lower=np.concatenate(lowers),
         upper=np.concatenate(uppers),
+        fingerprint=cyxla.tree_fingerprint(variables, leaf_shape, is_leaf=is_variable),
+    )
+
+
+def variable_layout_for(
+    template: PyTree[Any],
+    lower: Float[np.ndarray, " n"],
+    upper: Float[np.ndarray, " n"],
+    expected: tuple[cyxla.LeafInfo, ...],
+) -> VariableLayout:
+    """Returns the layout of a tree given to `load`, with the bounds that were saved.
+
+    The leaves of the tree are `Variable`s or arrays, and only their paths and shapes matter.
+    A tree that does not match the fingerprint of the saved problem raises a `ValueError`.
+    """
+    leaves, structure = jax.tree.flatten(template, is_leaf=is_variable)
+    fingerprint = cyxla.tree_fingerprint(template, leaf_shape, is_leaf=is_variable)
+    cyxla.check_fingerprint(expected, fingerprint, "variables")
+    shapes = tuple(leaf_shape(leaf) for leaf in leaves)
+    sizes = [math.prod(shape) for shape in shapes]
+    offsets = np.concatenate([[0], np.cumsum(sizes)[:-1]]).astype(int)
+    return VariableLayout(
+        structure=structure,
+        shapes=shapes,
+        offsets=tuple(int(offset) for offset in offsets),
+        lower=lower,
+        upper=upper,
+        fingerprint=fingerprint,
     )

@@ -80,7 +80,7 @@ def solve(
     multipliers = (
         None if warm_start is None else warm_start_multipliers(problem, warm_start)
     )
-    sign = -1.0 if problem.problem.sense is Sense.MAXIMIZE else 1.0
+    sign = -1.0 if problem.sense is Sense.MAXIMIZE else 1.0
 
     observer = None
     if options.callback is not None:

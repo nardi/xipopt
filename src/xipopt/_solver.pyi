@@ -45,6 +45,7 @@ def set_blas_threads(count: int) -> None: ...
 def ipopt_version() -> tuple[int, int, int]: ...
 
 class NativeProblem:
+    executables: tuple[Executable | None, ...]
     def __init__(
         self,
         executables: Sequence[Executable | None],

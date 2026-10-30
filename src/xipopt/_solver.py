@@ -369,7 +369,7 @@ class NativeProblem:
     """
 
     state: cython.pointer[SolverState]
-    executables: tuple
+    executables = cython.declare(tuple, visibility="readonly")
     """The executables, which have to outlive the handles that the state holds."""
     variable_lower: object
     variable_upper: object

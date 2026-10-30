@@ -20,6 +20,7 @@ from xipopt._problem_types import (
     Variable,
 )
 from xipopt._programs import SparsityDetectionError
+from xipopt._serialize import dumps, load, loads, save
 from xipopt._solve import Solution, solve
 from xipopt._solver import forward_blas, ipopt_version
 from xipopt._types import (
@@ -57,6 +58,10 @@ __all__ = [
     "Status",
     "Variable",
     "compile",
+    "dumps",
+    "load",
+    "loads",
+    "save",
     "ipopt_version",
     "solve",
 ]

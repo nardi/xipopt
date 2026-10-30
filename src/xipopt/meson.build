@@ -8,6 +8,7 @@ python.install_sources(
   '_patterns.py',
   '_problem_types.py',
   '_programs.py',
+  '_serialize.py',
   '_solve.py',
   '_types.py',
   '_solver.pyi',
