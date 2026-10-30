@@ -79,6 +79,12 @@ asdex = { git = "https://github.com/adrhill/asdex", rev = "da130b048b72c03e5ac1c
 # The README and the documentation are collected by markdown-pytest, which runs code
 # blocks marked with a `<!-- name: test_... -->` comment.
 testpaths = ["tests", "README.md", "docs"]
+# Unit tests solve small problems and cover all the code. Integration tests compare with
+# SciPy, run published problems, start new processes or run the documentation.
+markers = [
+    "unit: fast tests of single parts, which together cover all the code",
+    "integration: slower tests across the whole library and against other software",
+]
 
 [tool.coverage.run]
 branch = true

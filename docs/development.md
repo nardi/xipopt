@@ -9,11 +9,16 @@ uv sync
 uv run pytest
 ```
 
+The tests are in two groups. The unit tests in `tests/unit` solve small problems and cover
+all the code, and `uv run pytest -m unit` runs only them. The integration tests in
+`tests/integration` compare with SciPy, solve published problems and start new processes,
+and the code blocks of the README and of these pages count as integration tests as well.
+Run them with `uv run pytest -m integration`.
+
 `uv sync` builds the extension module in editable mode. Meson downloads the `meson-jll`
-tool and the JLL libraries during the first configuration. The tests need 100% coverage,
-including the Cython module, whose lines the development build traces. They also run the
-code blocks of the README and of these pages, which carry a `<!-- name: test_... -->`
-comment.
+tool and the JLL libraries during the first configuration. The unit tests need 100%
+coverage, including the Cython module, whose lines the development build traces. The code
+blocks of the README and of these pages carry a `<!-- name: test_... -->` comment.
 
 ```bash
 uv run ruff check

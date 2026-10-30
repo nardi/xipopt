@@ -49,10 +49,14 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked --python ${{ matrix.python-version }}
 
-      - name: Run tests
+      # The unit tests cover all the code, so only they record coverage.
+      - name: Run unit tests
         env:
           COVERAGE_FILE: .coverage.${{ matrix.os }}.${{ matrix.python-version }}
-        run: uv run --no-sync pytest --cov --cov-fail-under=0
+        run: uv run --no-sync pytest -m unit --cov --cov-fail-under=0
+
+      - name: Run integration tests
+        run: uv run --no-sync pytest -m integration
 
       - name: Upload coverage data
         uses: actions/upload-artifact@v4
