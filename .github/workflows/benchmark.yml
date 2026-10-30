@@ -29,8 +29,9 @@ jobs:
       - name: Build cyipopt
         run: |
           ipopt=$(echo subprojects/Ipopt-x86_64-linux-gnu-*)
+          uv pip install setuptools
           PKG_CONFIG_PATH="$PWD/$ipopt/lib/pkgconfig" \
-            uv pip install --no-build-isolation --no-binary cyipopt cyipopt setuptools
+            uv pip install --no-build-isolation --no-binary cyipopt cyipopt
 
       - name: Compare
         env:
