@@ -135,8 +135,9 @@ as a dense one.
 
 ## Without asdex
 
-Python 3.11 cannot install asdex. With `Derivatives.AUTOMATIC` the derivatives are then
-dense and compiling warns. `Derivatives.SPARSE` raises an `ImportError` instead, and
-`Derivatives.DENSE` is the explicit choice. Dense derivatives still use the entries of a
-given pattern, so a problem that gives its patterns gets sparse structure for Ipopt.
-Only the evaluation is dense, which suits problems of a few hundred variables.
+asdex is a dependency, so it is normally there. When someone has uninstalled it,
+`Derivatives.AUTOMATIC` computes dense derivatives and compiling warns.
+`Derivatives.SPARSE` raises an `ImportError` instead, and `Derivatives.DENSE` is the
+explicit choice. Dense derivatives still use the entries of a given pattern, so a
+problem that gives its patterns gets sparse structure for Ipopt. Only the evaluation is
+dense, which suits problems of a few hundred variables.

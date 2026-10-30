@@ -7,8 +7,8 @@ authors = [{ name = "Nardi Lam", email = "mail@nardilam.nl" }]
 requires-python = ">=3.11"
 license-files = ["LICENSE.md", "licenses/*"]
 dependencies = [
-    # asdex supports Python 3.12 and later, so Python 3.11 evaluates dense derivatives.
-    "asdex>=0.5.2; python_version >= '3.12'",
+    # Version 0.5.2 of asdex needs Python 3.12 and JAX 0.11, so Python 3.11 gets 0.5.1.
+    "asdex>=0.5.1",
     "cyxla[cpu]>=0.1,<0.2",
     "jax>=0.10,<0.12",
     "jaxtyping>=0.2",
@@ -72,7 +72,7 @@ config-settings = { setup-args = "-Dcoverage=true" }
 
 [tool.uv.sources]
 # This asdex commit fixes an empty sparsity pattern for functions that contain a
-# `jnp.where`. Released versions up to 0.5.2 have the bug.
+# `jnp.where`. Released versions up to 0.5.2 have the bug. Python 3.11 takes release 0.5.1.
 asdex = { git = "https://github.com/adrhill/asdex", rev = "da130b048b72c03e5ac1cb154968797bc32868b8", marker = "python_version >= '3.12'" }
 
 [tool.pytest.ini_options]

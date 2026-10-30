@@ -11,20 +11,14 @@ solvers MUMPS and SPRAL, OpenBLAS and the runtime libraries of the compiler, so 
 system needs no Ipopt or BLAS. [cyxla](https://nardi.github.io/cyxla/) and its CPU
 plugin come as dependencies, which means nothing downloads at run time.
 
-## Python versions
+## Python and JAX versions
 
-The sparsity detection of [asdex](https://pypi.org/project/asdex/) needs Python 3.12 or
-newer, and so does JAX 0.11. On Python 3.11 pip installs JAX 0.10 and leaves out asdex.
-xipopt then computes dense derivatives and warns about it, unless the problem gives the
-patterns of its Jacobian and Hessian. The [derivatives guide](guide/derivatives.md)
-describes the choices.
-
-## JAX versions
-
-xipopt works with JAX 0.10 and 0.11. The version of asdex that the detection relies on
-does not import on JAX 0.12 yet, so the dependency stops below it. The PJRT plugin of
-cyxla is a build of XLA 0.12 and compiles the StableHLO that these versions of JAX
-export.
+xipopt works with JAX 0.10 and 0.11. Release 0.5.2 of
+[asdex](https://pypi.org/project/asdex/), which detects sparsity, needs Python 3.12 and
+JAX 0.11, and does not import on JAX 0.12. Python 3.11 therefore installs JAX 0.10 and
+release 0.5.1 of asdex, which has the same interface for everything xipopt uses. The
+PJRT plugin of cyxla is a build of XLA 0.12 and compiles the StableHLO that these
+versions of JAX export.
 
 ## Licenses
 

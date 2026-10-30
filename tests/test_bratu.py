@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax.experimental import sparse
-from problems import REQUIRES_ASDEX, bratu_control, bratu_pattern
+from problems import bratu_control, bratu_pattern
 
 import xipopt as xip
 
@@ -24,7 +24,6 @@ def residual(solution: xip.Solution) -> float:
     return float(np.max(np.abs(solution.constraints[0])))
 
 
-@REQUIRES_ASDEX
 def test_detected_patterns_are_banded() -> None:
     """Checks that detection finds the three diagonals instead of a dense Jacobian."""
     compiled = xip.compile(bratu_control(SIZE))
@@ -56,7 +55,7 @@ def sparse_matrix(rows: np.ndarray, columns: np.ndarray) -> np.ndarray:
 @pytest.mark.parametrize("form", sorted(GIVEN_FORMS))
 @pytest.mark.parametrize(
     "derivatives",
-    [pytest.param(xip.Derivatives.SPARSE, marks=REQUIRES_ASDEX), xip.Derivatives.DENSE],
+    [xip.Derivatives.SPARSE, xip.Derivatives.DENSE],
 )
 def test_given_pattern_matches_detected(
     form: str, derivatives: xip.Derivatives
@@ -76,7 +75,8 @@ def test_given_pattern_matches_detected(
 
 def test_pattern_of_asdex_is_accepted() -> None:
     """Checks that an `asdex.SparsityPattern` works as a pattern."""
-    asdex = pytest.importorskip("asdex")
+    import asdex
+
     rows, columns = bratu_pattern(SIZE)
     avals = (
         jax.ShapeDtypeStruct((2 * SIZE,), jnp.float64),
@@ -107,7 +107,6 @@ def test_hessian_pattern_may_list_the_upper_triangle() -> None:
     assert xip.solve(compiled).status.succeeded
 
 
-@REQUIRES_ASDEX
 def test_bounds_on_a_larger_problem() -> None:
     """Checks that a problem with a few hundred variables solves with sparse derivatives."""
     solution = xip.solve(bratu_control(150))

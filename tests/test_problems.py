@@ -6,7 +6,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from problems import REQUIRES_ASDEX
 
 import xipopt as xip
 
@@ -112,7 +111,6 @@ def test_infinite_bounds_are_free() -> None:
     assert xip.solve(problem).x == pytest.approx(1e6, rel=1e-6)
 
 
-@REQUIRES_ASDEX
 def test_linear_problem_without_hessian_entries() -> None:
     """Checks a linear program, whose Hessian has no entries and no program."""
     problem = xip.Problem(
@@ -127,7 +125,6 @@ def test_linear_problem_without_hessian_entries() -> None:
     assert solution.statistics.hessian.calls == 0
 
 
-@REQUIRES_ASDEX
 def test_constraint_that_ignores_the_variables() -> None:
     """Checks the error for constraints with a Jacobian that has no entries."""
     problem = xip.Problem(
@@ -158,27 +155,24 @@ def test_dense_derivatives_without_asdex_warn(monkeypatch: pytest.MonkeyPatch) -
 
 
 def root_problem() -> xip.Problem:
-    """Returns a problem whose objective is a root, which asdex cannot trace."""
+    """Returns a problem whose objective solves a linear system, which asdex cannot trace."""
 
-    def cube_root(x):
-        return jax.lax.custom_root(
-            lambda y: y**3 - x,
+    def inverse(x):
+        return jax.lax.custom_linear_solve(
+            lambda v: (x + 1.0) * v,
             jnp.ones_like(x),
-            lambda f, y0: jax.lax.fori_loop(
-                0, 30, lambda _, y: y - f(y) / (3.0 * y**2), y0
-            ),
-            lambda g, y: y / g(jnp.ones_like(y)),
+            solve=lambda matvec, b: b / (x + 1.0),
+            symmetric=True,
         )
 
     return xip.Problem(
         variables=xip.Variable(lower=0.5, upper=2.0, shape=(3,)),
-        objective=lambda x, params: jnp.sum(cube_root(x) + x**2),
+        objective=lambda x, params: jnp.sum(inverse(x) + x**2),
     )
 
 
 def test_detection_failure_names_the_ways_out() -> None:
     """Checks the error for a function whose sparsity asdex cannot detect."""
-    pytest.importorskip("asdex")
     with pytest.raises(xip.SparsityDetectionError) as error:
         xip.compile(root_problem(), options=xip.CompileOptions(disk_cache=False))
     assert "Derivatives.DENSE" in str(error.value)

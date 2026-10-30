@@ -14,8 +14,34 @@ resolution-markers = [
 
 [[package]]
 name = "asdex"
+version = "0.5.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.12' and sys_platform != 'ios'",
+    "python_full_version < '3.12' and sys_platform == 'ios'",
+]
+dependencies = [
+    { name = "jax", version = "0.10.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "numba" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" } },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/71/b6/0c99f48e8dd214efb274b3843ed617da6e92d29a7f9a244e2c60202cfdc3/asdex-0.5.1.tar.gz", hash = "sha256:9fa01cd067689146a79a1adaf5aedf2e003bb63eb9ffab82d24518efb5b60648", size = 503167, upload-time = "2026-07-15T12:45:59.684Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/17/59/a480a093d44633a447bb0fecc8593db9d76cbb2060030bf3f3eeef173748/asdex-0.5.1-py3-none-any.whl", hash = "sha256:1ad9f71631e4aef8ab4264516b149d5cea47e5c250be6a606031b946867f296a", size = 144904, upload-time = "2026-07-15T12:45:58.427Z" },
+]
+
+[[package]]
+name = "asdex"
 version = "0.6.0"
 source = { git = "https://github.com/adrhill/asdex?rev=da130b048b72c03e5ac1cb154968797bc32868b8#da130b048b72c03e5ac1cb154968797bc32868b8" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform != 'ios'",
+    "python_full_version == '3.13.*' and sys_platform != 'ios'",
+    "python_full_version == '3.12.*' and sys_platform != 'ios'",
+    "python_full_version >= '3.14' and sys_platform == 'ios'",
+    "python_full_version == '3.13.*' and sys_platform == 'ios'",
+    "python_full_version == '3.12.*' and sys_platform == 'ios'",
+]
 dependencies = [
     { name = "jax", version = "0.11.2", source = { registry = "https://pypi.org/simple" } },
     { name = "numba" },
@@ -817,7 +843,8 @@ version = "0.68.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "llvmlite" },
-    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0f/a4/a60b14d955b898ce00d815dfe14435ae3b30c1dd2587aa0a172e92310cf8/numba-0.68.1.tar.gz", hash = "sha256:9de461812470173a14eeb7e0bbd27c897dffe835402a33861166842fc5f6ea57", size = 2858572, upload-time = "2026-10-27T18:13:04.352Z" }
 wheels = [
@@ -1553,7 +1580,8 @@ name = "xipopt"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
-    { name = "asdex", marker = "python_full_version >= '3.12'" },
+    { name = "asdex", version = "0.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "asdex", version = "0.6.0", source = { git = "https://github.com/adrhill/asdex?rev=da130b048b72c03e5ac1cb154968797bc32868b8#da130b048b72c03e5ac1cb154968797bc32868b8" }, marker = "python_full_version >= '3.12'" },
     { name = "cyxla", extra = ["cpu"] },
     { name = "jax", version = "0.10.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "jax", version = "0.11.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -1586,6 +1614,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asdex", marker = "python_full_version < '3.12'", specifier = ">=0.5.1" },
     { name = "asdex", marker = "python_full_version >= '3.12'", git = "https://github.com/adrhill/asdex?rev=da130b048b72c03e5ac1cb154968797bc32868b8" },
     { name = "cyxla", extras = ["cpu"], specifier = ">=0.1,<0.2" },
     { name = "jax", specifier = ">=0.10,<0.12" },

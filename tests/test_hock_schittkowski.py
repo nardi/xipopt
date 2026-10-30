@@ -2,22 +2,14 @@
 
 import numpy as np
 import pytest
-from problems import REQUIRES_ASDEX, KnownProblem, all_known_problems
+from problems import KnownProblem, all_known_problems
 
 import xipopt as xip
 
 PROBLEMS = {known.name: known for known in all_known_problems()}
 
 
-@pytest.mark.parametrize(
-    "derivatives",
-    [
-        pytest.param(derivatives, marks=REQUIRES_ASDEX)
-        if derivatives is xip.Derivatives.SPARSE
-        else derivatives
-        for derivatives in xip.Derivatives
-    ],
-)
+@pytest.mark.parametrize("derivatives", list(xip.Derivatives))
 @pytest.mark.parametrize("name", sorted(PROBLEMS))
 def test_solution_matches_publication(name: str, derivatives: xip.Derivatives) -> None:
     """Checks the objective and the point for every way of computing derivatives."""
