@@ -84,7 +84,10 @@ testpaths = ["tests", "README.md", "docs"]
 branch = true
 source = ["xipopt"]
 plugins = ["Cython.Coverage"]
-# Tests of an uninitialized runtime run in subprocesses, which coverage measures too.
+# CI combines the data of Linux, macOS and Windows runners, whose checkouts live at
+# different paths.
+relative_files = true
+# Tests of a fresh interpreter run in subprocesses, which coverage measures too.
 patch = ["subprocess"]
 
 [tool.coverage.report]
