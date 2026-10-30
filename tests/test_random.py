@@ -42,16 +42,26 @@ def reference_solution(data: dict[str, np.ndarray], radius: float) -> float:
         )
 
     size = data["cost"].size
-    result = optimize.minimize(
-        value,
-        np.zeros(size),
-        method="SLSQP",
-        constraints=[
-            {"type": "ineq", "fun": lambda x: data["limit"] - data["matrix"] @ x},
-            {"type": "ineq", "fun": lambda x: radius**2 - x @ x},
-        ],
-        options={"ftol": 1e-14, "maxiter": 500},
-    )
+    constraints = [
+        optimize.NonlinearConstraint(
+            lambda x: data["matrix"] @ x, -np.inf, data["limit"]
+        ),
+        optimize.NonlinearConstraint(lambda x: x @ x, -np.inf, radius**2),
+    ]
+    # SLSQP stops early on some platforms, so a second method backs it up.
+    for method, options in (
+        ("SLSQP", {"ftol": 1e-14, "maxiter": 500}),
+        ("trust-constr", {"gtol": 1e-10, "xtol": 1e-12, "maxiter": 2000}),
+    ):
+        result = optimize.minimize(
+            value,
+            np.zeros(size),
+            method=method,
+            constraints=constraints,
+            options=options,
+        )
+        if result.success:
+            break
     assert result.success
     return float(result.fun)
 
