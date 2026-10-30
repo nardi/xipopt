@@ -13,11 +13,11 @@ from typing import NamedTuple
 import cython
 import cyxla
 import numpy as np
-from cython.cimports.cyxla._pjrt import PJRT_Buffer_Type_F64
-from cython.cimports.cyxla._runtime import (
+from cython.cimports.cyxla import (
     ABI_VERSION,
     MAX_OUTPUTS,
     Executable,
+    PJRT_Buffer_Type_F64,
     alias_buffer,
     aligned_memory,
     destroy_buffer,

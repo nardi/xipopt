@@ -131,20 +131,16 @@ def test_trees_are_checked_against_the_file() -> None:
     assert xip.loads(data, good, {"w": np.ones(3)}).params.size == 3
 
 
-def test_a_file_from_another_machine_is_compiled_again(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_a_file_from_another_machine_is_compiled_again() -> None:
     """Checks the fallback for a fingerprint that the file has no executable for."""
     known = hs071()
     compiled = xip.compile(known.problem)
     data = xip.dumps(compiled)
-    real = cyxla.target_fingerprint()
-    monkeypatch.setattr(
-        "cyxla._targets.target_fingerprint", lambda: real._replace(machine="other")
-    )
-    with pytest.raises(cyxla.TargetMismatchError):
-        xip.loads(data, known.problem.variables, on_mismatch="raise")
-    loaded = xip.loads(data, known.problem.variables)
+    other = cyxla.target_fingerprint()._replace(machine="other")
+    with cyxla.override_target(other):
+        with pytest.raises(cyxla.TargetMismatchError):
+            xip.loads(data, known.problem.variables, on_mismatch="raise")
+        loaded = xip.loads(data, known.problem.variables)
     assert loaded.statistics.compiled == 5
     assert solved(loaded, known.start).objective == pytest.approx(
         solved(compiled, known.start).objective, abs=1e-9

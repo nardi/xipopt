@@ -1,6 +1,6 @@
 from libc.stdint cimport int64_t
 
-from cyxla._runtime cimport Input, ProgramSpec
+from cyxla cimport Input, ProgramSpec
 from xipopt._ipopt cimport IpoptProblem
 
 
