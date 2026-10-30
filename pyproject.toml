@@ -1,6 +1,6 @@
 [project]
 name = "xipopt"
-version = "0.0.1"
+version = "0.1.0"
 description = "Ipopt for JAX functions, called through the PJRT C API"
 readme = "README.md"
 authors = [{ name = "Nardi Lam", email = "mail@nardilam.nl" }]
