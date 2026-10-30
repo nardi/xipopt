@@ -1,10 +1,10 @@
-# Lets Meson fetch meson-jll 0.1.0 when it is not on PATH. The sections
+# Lets Meson fetch meson-jll 0.1.1 when it is not on PATH. The sections
 # named meson-jll below it hold the lock, which meson-jll writes itself.
 [wrap-file]
-directory = meson-jll-wrap-0.1.0
-source_url = https://github.com/nardi/meson-jll/releases/download/v0.1.0/meson-jll-wrap.tar.gz
-source_filename = meson-jll-wrap-0.1.0.tar.gz
-source_hash = df467dd4082d84ca331c21400cef7447144403706b84c653378ab7866da90276
+directory = meson-jll-wrap-0.1.1
+source_url = https://github.com/nardi/meson-jll/releases/download/v0.1.1/meson-jll-wrap.tar.gz
+source_filename = meson-jll-wrap-0.1.1.tar.gz
+source_hash = 3041d201587eb175a8c66dec5f4f74e252f879cdf6cee0751b46bd6fdb8235e4
 
 [provide]
 program_names = meson-jll
