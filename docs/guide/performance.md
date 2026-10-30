@@ -30,7 +30,7 @@ and problems to see where yours falls:
 
 ```bash
 uv pip install setuptools
-PKG_CONFIG_PATH=subprojects/Ipopt-<platform>/lib/pkgconfig \
+PKG_CONFIG_PATH="$PWD/subprojects/Ipopt-<platform>/lib/pkgconfig" \
     uv pip install --no-build-isolation --no-binary cyipopt cyipopt
 uv run python benchmarks/compare.py
 ```

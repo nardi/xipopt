@@ -28,7 +28,7 @@ jobs:
       # sides of the comparison use one library.
       - name: Build cyipopt
         run: |
-          ipopt=$(echo subprojects/Ipopt-x86_64-linux-gnu-*)
+          ipopt=$(ls -d subprojects/Ipopt-x86_64-linux-gnu-*/ | head -1)
           uv pip install setuptools
           PKG_CONFIG_PATH="$PWD/$ipopt/lib/pkgconfig" \
             uv pip install --no-build-isolation --no-binary cyipopt cyipopt
