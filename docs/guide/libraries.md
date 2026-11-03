@@ -63,6 +63,34 @@ come with patterns. The programs refer to callbacks of the running process, so s
 problem cannot be saved and does not use the disk cache. Ordered callbacks are not
 supported.
 
+## Native functions
+
+A C, C++, Rust or Cython kernel can be offered to xipopt problems as a native function of
+cyxla. The function receives the buffers of the arguments and writes its results in place,
+without the GIL, and a problem that calls it keeps the solve free of Python. The
+[native functions guide of cyxla](https://nardi.github.io/cyxla/guide/native-functions/)
+describes the C interface and the Cython way to register one.
+
+A function has no derivative by itself, so a library offers it as a primitive from
+`cyxla.native_primitive`, with a `jvp` rule written in `jnp` operations. Then Ipopt gets
+first and second derivatives, and the exact Hessian works. A `custom_vjp` function would not
+work with the exact Hessian, because forward mode cannot differentiate it.
+
+```python
+import mykernels  # Registers the native function and offers the primitive `square`.
+
+problem = xip.Problem(
+    variables=xip.Variable(lower=0.5, upper=10.0, shape=(2,)),
+    objective=lambda x, params: jnp.sum((mykernels.square(x) - target) ** 2),
+)
+options = xip.CompileOptions(derivatives=xip.Derivatives.DENSE)
+```
+
+Native functions need `Derivatives.DENSE`, or patterns that the problem gives, for the same
+reason as other FFI calls. They need no `custom_calls` option. A saved problem records the
+name of each function with the package and version that registered it. The process that
+loads the file imports the library first, or passes `import_providers=True`.
+
 ## Saving and loading
 
 A saved problem refers to a kernel by name, and the kernel lives in its library. The
