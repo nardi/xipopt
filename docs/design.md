@@ -39,6 +39,17 @@ which makes Ipopt treat the point as one where it cannot evaluate and shorten it
 The message goes to the error buffer of cyxla. `solve` raises it as a `RuntimeError`
 when the solve ends without success, and ignores it when Ipopt recovered.
 
+## Callbacks into Python
+
+The promise above, that a solve never enters the interpreter, holds unless the problem is
+compiled with `host_callbacks=True`. A callback in a program calls the native function
+`cyxla.python_callback`, which takes the GIL, runs the Python function with copies of the
+arguments and copies the results back. The solve thread has released the GIL, so the
+native function does not deadlock. An exception becomes the error of that execution, and
+the callback returns `false` to Ipopt as for any other failure. The rule that the
+callbacks of Ipopt must not raise still holds for the code of xipopt, since the native
+function belongs to cyxla.
+
 ## Lowering and compiling
 
 `compile` traces the functions on flat vectors of variables and parameters, inside

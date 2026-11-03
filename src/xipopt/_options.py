@@ -60,6 +60,15 @@ class CompileOptions(NamedTuple):
     can add targets that it does not call itself, for instance a transposed solve. `"detect"`
     reads the targets from the lowered programs and allows every one of them.
     """
+    host_callbacks: bool = False
+    """Whether the functions may call back into Python, for instance through `jax.debug.callback`.
+
+    The callbacks run inside the programs with the GIL, which each call takes, so a solve
+    is slower for every callback it makes. A problem with this option cannot be saved, since
+    its programs refer to callbacks of this process, and it does not use the disk cache. The
+    option replaces `custom_calls`, because such programs are not checked by `jax.export`.
+    `EQX_ON_ERROR=nan` removes the callbacks of Equinox and keeps the solve free of Python.
+    """
     debug_info: bool = True
     """Whether the programs keep the source locations of their operations.
 

@@ -117,6 +117,11 @@ def pack(compiled: CompiledProblem) -> tuple[cyxla.BundleWriter, dict[str, Any]]
 
     The programs are added to the writer, and their records go into the header.
     """
+    if compiled.options.host_callbacks:
+        raise ValueError(
+            "A problem compiled with `host_callbacks=True` cannot be saved, because its "
+            "programs refer to Python callbacks of this process."
+        )
     writer = cyxla.BundleWriter(KIND, VERSION)
     arrays = {
         "variable_lower": compiled.variables.lower,

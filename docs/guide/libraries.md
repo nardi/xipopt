@@ -30,14 +30,14 @@ the `Problem`.
 
 ## Callbacks into Python
 
-A program cannot call back into Python. `jax.debug.callback`, `jax.pure_callback` and
-`jax.experimental.io_callback` fail when the problem is compiled, with an error that
-lists each callback and the line that made it.
+`jax.debug.callback`, `jax.pure_callback` and `jax.experimental.io_callback` call back
+into Python, which a program cannot do on its own. Compiling a problem with one raises an
+error that lists each callback and the line that made it.
 
 `equinox.error_if` is the usual source. With the default `EQX_ON_ERROR=raise` it adds a
 callback to the program. Set `EQX_ON_ERROR=nan` before Equinox is imported, and a failed
 check returns NaN instead. Ipopt cuts the step when the objective or a constraint is not
-a number, so the check does what it was written for.
+a number, so the check does what it was written for, and the solve never enters Python.
 
 ```python
 import os
@@ -46,6 +46,22 @@ os.environ["EQX_ON_ERROR"] = "nan"
 
 import equinox as eqx  # noqa: E402
 ```
+
+`CompileOptions(host_callbacks=True)` keeps the callbacks and runs them inside the
+programs instead. A callback that raises ends that evaluation with an error. Ipopt treats
+this like a point where the functions cannot be evaluated and shortens the step. If it
+happens at every point, the solve fails with the message of the exception.
+
+```python
+options = xip.CompileOptions(host_callbacks=True, derivatives=xip.Derivatives.DENSE)
+compiled = xip.compile(problem, params, options)
+```
+
+The option has costs. Each callback takes the GIL, so a solve is slower for every
+callback it makes. `asdex` does not know callbacks, so the derivatives must be dense or
+come with patterns. The programs refer to callbacks of the running process, so such a
+problem cannot be saved and does not use the disk cache. Ordered callbacks are not
+supported.
 
 ## Saving and loading
 

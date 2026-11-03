@@ -111,7 +111,8 @@ def build(
     structure = None
     detect_seconds = lower_seconds = 0.0
     lowered_count = 0
-    if options.disk_cache:
+    disk_cache = options.disk_cache and not options.host_callbacks
+    if disk_cache:
         lowered = cyxla.load_lowered(key)
         structure = _cache.load_structure(key)
     if lowered is None or structure is None or len(lowered) != len(Program):
@@ -125,7 +126,7 @@ def build(
         lowered = lower_programs(functions, derivatives, arguments, options)
         lower_seconds = time.perf_counter() - step
         lowered_count = sum(program is not None for program in lowered)
-        if options.disk_cache:
+        if disk_cache:
             cyxla.store_lowered(key, lowered)
             _cache.store_structure(key, structure)
 
@@ -134,7 +135,7 @@ def build(
             "The constraints do not depend on the variables, so their Jacobian has no "
             "entries, which Ipopt does not accept."
         )
-    executables, compile_statistics = compile_programs(lowered, options)
+    executables, compile_statistics = compile_programs(lowered, disk_cache)
     check_output_sizes(executables, n, constraint_size, structure)
     lower_bound, upper_bound = constraint_bounds(problem, functions.constraint_shapes)
     native = make_native(
@@ -221,6 +222,7 @@ def lower_programs(
                 platform="cpu",
                 custom_calls=options.custom_calls,
                 debug_info=options.debug_info,
+                host_callbacks=options.host_callbacks,
             )
         except ValueError as error:
             if "no compatibility guarantees" not in str(error):
@@ -250,18 +252,16 @@ def lower_programs(
 
 
 def compile_programs(
-    lowered: Sequence[LoweredProgram | None], options: CompileOptions
+    lowered: Sequence[LoweredProgram | None], disk_cache: bool
 ) -> tuple[tuple[Executable | None, ...], cyxla.CompileStatistics]:
-    """Compiles lowered programs, or loads their executables from the disk cache."""
+    """Compiles lowered programs, or loads their executables from the disk cache if allowed."""
     statistics = cyxla.CompileStatistics()
     executables: list[Executable | None] = []
     for program in lowered:
         if program is None:
             executables.append(None)
             continue
-        executable, compiled = cyxla.compile_program(
-            program, disk_cache=options.disk_cache
-        )
+        executable, compiled = cyxla.compile_program(program, disk_cache=disk_cache)
         statistics = statistics.add(compiled)
         executables.append(executable)
     return tuple(executables), statistics
