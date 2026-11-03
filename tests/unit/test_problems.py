@@ -2,6 +2,7 @@
 
 import warnings
 
+import cyxla
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -191,3 +192,39 @@ def test_ways_out_of_a_detection_failure_work(options: xip.CompileOptions) -> No
     solution = xip.solve(root_problem(), compile_options=options)
     assert solution.status.succeeded
     np.testing.assert_allclose(solution.x, 0.5, atol=1e-5)
+
+
+def lowering_fails_with(
+    monkeypatch: pytest.MonkeyPatch, message: str
+) -> pytest.ExceptionInfo[ValueError]:
+    """Compiles a small problem while `cyxla.lower` raises a `ValueError` with the message."""
+
+    def fail(*arguments: object, **options: object) -> None:
+        raise ValueError(message)
+
+    monkeypatch.setattr(cyxla, "lower", fail)
+    problem = xip.Problem(xip.Variable(shape=(1,)), lambda x, p: x[0] ** 2)
+    with pytest.raises(ValueError) as caught:
+        xip.compile(problem, options=xip.CompileOptions(disk_cache=False))
+    return caught
+
+
+def test_other_errors_of_lowering_are_not_rewritten(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks that only the error about custom calls gets the explanation of the option."""
+    caught = lowering_fails_with(monkeypatch, "something else")
+    assert str(caught.value) == "something else"
+
+
+def test_error_about_custom_calls_names_the_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checks that the error of `cyxla.lower` is replaced by one that names `custom_calls`."""
+    caught = lowering_fails_with(
+        monkeypatch,
+        "Cannot serialize code with custom calls whose targets have no "
+        "compatibility guarantees: my_target",
+    )
+    assert "CompileOptions(custom_calls=" in str(caught.value)
+    assert isinstance(caught.value.__cause__, ValueError)

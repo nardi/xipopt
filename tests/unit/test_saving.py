@@ -1,8 +1,10 @@
 """Tests of saving a compiled problem and loading it in the same and in another process."""
 
 import dataclasses
+import json
+import warnings
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple, cast
 
 import cyxla
 import jax
@@ -12,6 +14,9 @@ import pytest
 from problems import bratu_control, hs071
 
 import xipopt as xip
+from xipopt import _serialize
+from xipopt._layout import params_layout, variable_layout
+from xipopt._types import Program
 
 
 def solved(compiled: xip.CompiledProblem, start: Any = None) -> xip.Solution:
@@ -183,3 +188,102 @@ def test_damaged_files_are_rejected(tmp_path: Path) -> None:
     other = cyxla.BundleWriter("other.object", 1).to_bytes({})
     with pytest.raises(cyxla.BundleError, match="holds other.object"):
         xip.loads(other, known.problem.variables)
+
+
+def test_warm_up_point_is_inside_the_bounds() -> None:
+    """Checks the midpoint, the single finite bound and the free variable."""
+    layout = variable_layout(
+        xip.Variable(
+            lower=np.array([0.0, 1.0, -np.inf, -np.inf]),
+            upper=np.array([2.0, np.inf, 3.0, np.inf]),
+        )
+    )
+    np.testing.assert_array_equal(
+        _serialize.warm_up_point(layout), [1.0, 1.0, 3.0, 0.0]
+    )
+
+
+def test_warm_up_parameters_use_values_or_zeros() -> None:
+    """Checks that given parameters are used, and that shapes alone give zeros."""
+    params = {"a": np.array([1.0, 2.0])}
+    layout = params_layout(params)
+    np.testing.assert_array_equal(
+        _serialize.warm_up_parameters(layout, params), [1.0, 2.0]
+    )
+    shapes = {"a": jax.ShapeDtypeStruct((2,), jnp.float64)}
+    np.testing.assert_array_equal(
+        _serialize.warm_up_parameters(layout, shapes), [0.0, 0.0]
+    )
+
+
+class FailingExecutable(NamedTuple):
+    """A stand-in for an executable that fails when it runs, and notes what it ran on."""
+
+    input_types: tuple[cyxla.ArrayType, ...]
+    runs: list[list[np.ndarray]]
+
+    def warm_up(self, arguments: Any) -> None:
+        """Records the arguments and fails like a program that rejects its input."""
+        self.runs.append(list(arguments))
+        raise RuntimeError("the matrix is singular")
+
+
+def test_failed_warm_up_is_a_warning() -> None:
+    """Checks that a program that fails on the warm-up input does not stop loading."""
+    known = hs071()
+    layout = variable_layout(known.problem.variables)
+    float_type = np.dtype("float64")
+    types = (
+        cyxla.ArrayType(float_type, (4,)),
+        cyxla.ArrayType(float_type, (1,)),
+        cyxla.ArrayType(float_type, ()),
+        cyxla.ArrayType(float_type, (2,)),
+    )
+    executable = FailingExecutable(types, [])
+    with pytest.warns(RuntimeWarning, match="hessian program failed.*singular"):
+        _serialize.warm_up_program(
+            Program.HESSIAN,
+            cast(cyxla.Executable, executable),
+            layout,
+            params_layout(None),
+            None,
+        )
+    (arguments,) = executable.runs
+    np.testing.assert_array_equal(arguments[0], [3.0, 3.0, 3.0, 3.0])
+    assert [argument.shape for argument in arguments] == [(4,), (1,), (), (2,)]
+
+
+def test_warm_up_passes_silently_for_a_normal_problem() -> None:
+    """Checks that loading with the warm-up raises no warning when the programs run."""
+    known = hs071()
+    data = xip.dumps(xip.compile(known.problem))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        xip.loads(data, known.problem.variables)
+
+
+@pytest.mark.parametrize("custom_calls", ["detect", ("first", "second"), ()])
+def test_compile_options_survive_json(
+    custom_calls: tuple[str, ...] | Literal["detect"],
+) -> None:
+    """Checks that the options of a problem are restored from the header of a file."""
+    options = xip.CompileOptions(custom_calls=custom_calls, debug_info=False)
+    data = json.loads(json.dumps(cyxla.encode_record(options)))
+    assert cyxla.decode_record(xip.CompileOptions, data) == options
+    assert cyxla.decode_record(xip.CompileOptions, {"zero_copy": False}) == (
+        xip.CompileOptions(zero_copy=False)
+    )
+
+
+def test_problem_without_debug_info_is_smaller() -> None:
+    """Checks that removing the source locations shrinks the file and keeps the solution."""
+    known = hs071()
+    sizes = {}
+    solutions = {}
+    for debug_info in (True, False):
+        options = xip.CompileOptions(debug_info=debug_info, disk_cache=False)
+        compiled = xip.compile(known.problem, options=options)
+        sizes[debug_info] = len(xip.dumps(compiled))
+        solutions[debug_info] = solved(compiled, known.start)
+    assert sizes[False] < 0.9 * sizes[True]
+    np.testing.assert_allclose(solutions[False].x, solutions[True].x, atol=1e-10)

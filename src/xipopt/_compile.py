@@ -122,7 +122,7 @@ def build(
         detect_seconds = time.perf_counter() - step
         structure = structure_of(derivatives)
         step = time.perf_counter()
-        lowered = lower_programs(functions, derivatives, arguments)
+        lowered = lower_programs(functions, derivatives, arguments, options)
         lower_seconds = time.perf_counter() - step
         lowered_count = sum(program is not None for program in lowered)
         if options.disk_cache:
@@ -203,6 +203,7 @@ def lower_programs(
     functions: _programs.FlatFunctions,
     derivatives: _programs.DerivativeFunctions,
     arguments: _programs.ProgramArguments,
+    options: CompileOptions,
 ) -> tuple[LoweredProgram | None, ...]:
     """Lowers the five programs of a problem, in the order of `Program`.
 
@@ -213,7 +214,23 @@ def lower_programs(
     def lower(function: _programs.FlatFunction | None, shapes: Any) -> Any:
         if function is None:
             return None
-        return cyxla.lower(function, shapes, platform="cpu")
+        try:
+            return cyxla.lower(
+                function,
+                shapes,
+                platform="cpu",
+                custom_calls=options.custom_calls,
+                debug_info=options.debug_info,
+            )
+        except ValueError as error:
+            if "no compatibility guarantees" not in str(error):
+                raise
+            raise ValueError(
+                "A program calls custom call targets that JAX has no compatibility "
+                "guarantees for, such as the targets of a third-party library. Allow "
+                'them with `CompileOptions(custom_calls="detect")`, or name the targets '
+                "in `custom_calls`."
+            ) from error
 
     jacobian = derivatives.jacobian
     hessian = derivatives.hessian

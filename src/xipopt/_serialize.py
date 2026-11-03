@@ -9,15 +9,24 @@ compiled one, and the file only keeps the path and shape of each leaf to check t
 import importlib.metadata
 import os
 import time
+import warnings
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import cyxla
+import jax
 import numpy as np
-from jaxtyping import PyTree
+from jaxtyping import Float, PyTree
 
 from xipopt import _cache
 from xipopt._compile import CompiledProblem, check_output_sizes, make_native
-from xipopt._layout import params_layout, variable_layout_for
+from xipopt._layout import (
+    INFINITY,
+    ParamsLayout,
+    VariableLayout,
+    params_layout,
+    variable_layout_for,
+)
 from xipopt._options import CompileOptions
 from xipopt._types import Program, Sense
 
@@ -51,6 +60,7 @@ def loads(
     *,
     on_mismatch: Literal["recompile", "raise"] = "recompile",
     warm_up: bool = True,
+    import_providers: bool = False,
 ) -> CompiledProblem:
     """Returns the compiled problem that `dumps` made from bytes.
 
@@ -62,10 +72,23 @@ def loads(
 
     Executables that were stored for another machine are replaced by a compilation of the
     StableHLO, unless `on_mismatch` is `raise`. With `warm_up` each program runs once, so the
-    first solve is as fast as the later ones.
+    first solve is as fast as the later ones. The warm-up runs on the midpoint of the bounds of
+    the variables and on the given `params`, or on zeros for parameters that are only shapes.
+    A program that fails there raises a warning and the problem loads anyway.
+
+    A program that calls a library such as `klujax` needs that library imported before
+    loading, since its handlers live in the library. Loading raises a `MissingTargetError`
+    that names the library and its version when it is not. With `import_providers` loading
+    imports those libraries itself, which runs their code, so only use it for files you
+    trust.
     """
     return read(
-        cyxla.Bundle(data, KIND, VERSION), variables, params, on_mismatch, warm_up
+        cyxla.Bundle(data, KIND, VERSION),
+        variables,
+        params,
+        on_mismatch,
+        warm_up,
+        import_providers,
     )
 
 
@@ -76,10 +99,16 @@ def load(
     *,
     on_mismatch: Literal["recompile", "raise"] = "recompile",
     warm_up: bool = True,
+    import_providers: bool = False,
 ) -> CompiledProblem:
     """Returns the compiled problem that `save` wrote to a file, as `loads` does."""
     return read(
-        cyxla.Bundle.read(path, KIND, VERSION), variables, params, on_mismatch, warm_up
+        cyxla.Bundle.read(path, KIND, VERSION),
+        variables,
+        params,
+        on_mismatch,
+        warm_up,
+        import_providers,
     )
 
 
@@ -128,13 +157,16 @@ def read(
     params: PyTree[Any],
     on_mismatch: Literal["recompile", "raise"],
     warm_up: bool,
+    import_providers: bool,
 ) -> CompiledProblem:
     """Builds a compiled problem from a bundle and the trees of its variables and parameters."""
     start = time.perf_counter()
     meta = bundle.meta
     records = meta["programs"]
-    needed = cyxla.record_custom_calls([record for record in records if record])
+    present = [record for record in records if record]
+    needed = cyxla.record_custom_calls(present)
     cyxla.initialize(platform="cpu", jax_targets=bool(needed))
+    cyxla.check_targets(present, import_providers)
 
     variable_layout = variable_layout_for(
         variables,
@@ -152,13 +184,13 @@ def read(
 
     statistics = cyxla.CompileStatistics()
     executables = []
-    for record in records:
+    for program, record in zip(Program, records, strict=True):
         if record is None:
             executables.append(None)
             continue
         executable, loaded = cyxla.load_program(bundle, record, on_mismatch)
         if warm_up:
-            executable.warm_up()
+            warm_up_program(program, executable, variable_layout, layout, params)
         statistics = statistics.add(loaded)
         executables.append(executable)
 
@@ -189,3 +221,61 @@ def read(
         structure=structure,
         statistics=_cache.combine(statistics, 0.0, 0.0, 0, time.perf_counter() - start),
     )
+
+
+def warm_up_point(variables: VariableLayout) -> Float[np.ndarray, " n"]:
+    """Returns a point inside the bounds of the variables, in the middle where it can be.
+
+    A variable with two finite bounds gets their midpoint, one with a single finite bound
+    gets that bound, and a free one gets zero.
+    """
+    lower_finite = variables.lower > -INFINITY
+    upper_finite = variables.upper < INFINITY
+    return np.where(
+        lower_finite & upper_finite,
+        0.5 * (variables.lower + variables.upper),
+        np.where(
+            lower_finite, variables.lower, np.where(upper_finite, variables.upper, 0.0)
+        ),
+    )
+
+
+def warm_up_parameters(
+    layout: ParamsLayout, params: PyTree[Any]
+) -> Float[np.ndarray, " p"]:
+    """Returns the flat parameters to warm up with, which are zeros for shapes without values."""
+    if any(isinstance(leaf, jax.ShapeDtypeStruct) for leaf in jax.tree.leaves(params)):
+        return np.zeros(layout.size)
+    return layout.flatten(params)
+
+
+def warm_up_program(
+    program: Program,
+    executable: cyxla.Executable,
+    variables: VariableLayout,
+    layout: ParamsLayout,
+    params: PyTree[Any],
+) -> None:
+    """Runs a program once on a plausible input, so that its first real call is not slower.
+
+    Zeros are a bad input for a program that factorizes a matrix, which fails on a singular
+    one. A failure here says nothing about whether the program works elsewhere, since the
+    run only loads code, so it raises a warning and loading goes on.
+    """
+    expected = executable.input_types
+    assert expected is not None
+    values: Sequence[np.ndarray] = [
+        warm_up_point(variables),
+        warm_up_parameters(layout, params),
+        np.ones(()),
+        np.zeros(expected[-1].shape),
+    ]
+    try:
+        executable.warm_up(values[: len(expected)])
+    except RuntimeError as error:
+        warnings.warn(
+            f"The {program.name.lower()} program failed to run once while loading, so it "
+            f"was not warmed up: {error}",
+            RuntimeWarning,
+            stacklevel=4,
+        )

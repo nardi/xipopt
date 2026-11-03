@@ -15,6 +15,7 @@ nav = [
     { "Derivatives and sparsity" = "guide/derivatives.md" },
     { "Options and callbacks" = "guide/options.md" },
     { "Saving and loading" = "guide/saving.md" },
+    { "Libraries with their own kernels" = "guide/libraries.md" },
     { "Performance" = "guide/performance.md" },
   ] },
   { "Design" = "design.md" },
