@@ -287,3 +287,34 @@ def test_problem_without_debug_info_is_smaller() -> None:
         solutions[debug_info] = solved(compiled, known.start)
     assert sizes[False] < 0.9 * sizes[True]
     np.testing.assert_allclose(solutions[False].x, solutions[True].x, atol=1e-10)
+
+
+@pytest.mark.parametrize("workers", [1, 2, None])
+def test_programs_load_on_any_number_of_threads(workers: int | None) -> None:
+    """Checks that the number of threads changes neither the programs nor the solution."""
+    known = hs071()
+    data = xip.dumps(xip.compile(known.problem))
+    loaded = xip.loads(data, known.problem.variables, workers=workers)
+    assert loaded.statistics.loaded == 5
+    solution = solved(loaded, known.start)
+    assert solution.objective == pytest.approx(known.objective, abs=1e-6)
+
+
+def test_load_programs_keeps_the_gaps_and_raises_failures() -> None:
+    """Checks that absent programs stay absent and that a failing thread raises its error."""
+    known = hs071()
+    compiled = xip.compile(
+        known.problem, options=xip.CompileOptions(hessian=xip.Hessian.LIMITED_MEMORY)
+    )
+    data = xip.dumps(compiled)
+    bundle = cyxla.Bundle(data, _serialize.KIND, _serialize.VERSION)
+    records = bundle.meta["programs"]
+    assert records[-1] is None
+    loaded = _serialize.load_programs(bundle, records, "raise", 4)
+    assert [item is None for item in loaded] == [False] * 4 + [True]
+    elsewhere = cyxla.TargetFingerprint("cpu", "other", "arm64", "plugin", 1, "0.1")
+    with cyxla.override_target(elsewhere):
+        with pytest.raises(
+            cyxla.TargetMismatchError, match="no executable for this machine"
+        ):
+            _serialize.load_programs(bundle, records, "raise", 4)

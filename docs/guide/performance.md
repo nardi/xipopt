@@ -68,3 +68,22 @@ Compiling five programs takes a second or two for a small problem, and sparsity
 detection and compilation grow with the size of the functions. The disk cache removes
 that cost for every run after the first. A problem that gives its sparsity patterns
 skips detection, which can be most of the build for large functions.
+
+## Loading a saved problem
+
+A saved problem loads by deserializing one executable per program, which takes most of the
+time for large programs. `load` and `loads` deserialize on several threads by default, since
+the work releases the GIL, and `workers=1` loads one program after another. The programs of
+a problem differ in size, so the time falls to that of the largest one at best.
+
+Two measurements with `benchmarks/loading.py`, on a problem with an unrolled Newton solve of
+40 iterations, four programs and a limited-memory Hessian, on four processors:
+
+| Source locations | File | One thread | Four threads |
+|---|---:|---:|---:|
+| Kept | 6.40 MB | 1674 ms | 1225 ms |
+| Removed with `debug_info=False` | 5.57 MB | 1446 ms | 842 ms |
+
+The numbers come from one machine and one problem and vary from run to run. Removing the
+source locations also removes the file and line information that profiles of the plugin
+use. Passing `warm_up=False` skips the run of each program that follows loading.
