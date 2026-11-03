@@ -11,6 +11,7 @@ import os
 import time
 import warnings
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal
 
 import cyxla
@@ -61,6 +62,7 @@ def loads(
     on_mismatch: Literal["recompile", "raise"] = "recompile",
     warm_up: bool = True,
     import_providers: bool = False,
+    workers: int | None = None,
 ) -> CompiledProblem:
     """Returns the compiled problem that `dumps` made from bytes.
 
@@ -81,6 +83,9 @@ def loads(
     that names the library and its version when it is not. With `import_providers` loading
     imports those libraries itself, which runs their code, so only use it for files you
     trust.
+
+    The programs of the file load on `workers` threads, which by default is one per program up
+    to the number of processors. Pass 1 to load them one after another.
     """
     return read(
         cyxla.Bundle(data, KIND, VERSION),
@@ -89,6 +94,7 @@ def loads(
         on_mismatch,
         warm_up,
         import_providers,
+        workers,
     )
 
 
@@ -100,6 +106,7 @@ def load(
     on_mismatch: Literal["recompile", "raise"] = "recompile",
     warm_up: bool = True,
     import_providers: bool = False,
+    workers: int | None = None,
 ) -> CompiledProblem:
     """Returns the compiled problem that `save` wrote to a file, as `loads` does."""
     return read(
@@ -109,6 +116,7 @@ def load(
         on_mismatch,
         warm_up,
         import_providers,
+        workers,
     )
 
 
@@ -163,6 +171,7 @@ def read(
     on_mismatch: Literal["recompile", "raise"],
     warm_up: bool,
     import_providers: bool,
+    workers: int | None,
 ) -> CompiledProblem:
     """Builds a compiled problem from a bundle and the trees of its variables and parameters."""
     start = time.perf_counter()
@@ -187,16 +196,17 @@ def read(
         *(bundle.array(name, np.intc).copy() for name in _cache.Structure._fields)
     )
 
+    loaded_programs = load_programs(bundle, records, on_mismatch, workers)
     statistics = cyxla.CompileStatistics()
     executables = []
-    for program, record in zip(Program, records, strict=True):
-        if record is None:
+    for program, loaded in zip(Program, loaded_programs, strict=True):
+        if loaded is None:
             executables.append(None)
             continue
-        executable, loaded = cyxla.load_program(bundle, record, on_mismatch)
+        executable, program_statistics = loaded
         if warm_up:
             warm_up_program(program, executable, variable_layout, layout, params)
-        statistics = statistics.add(loaded)
+        statistics = statistics.add(program_statistics)
         executables.append(executable)
 
     options = cyxla.decode_record(CompileOptions, meta["options"])
@@ -226,6 +236,37 @@ def read(
         structure=structure,
         statistics=_cache.combine(statistics, 0.0, 0.0, 0, time.perf_counter() - start),
     )
+
+
+def load_programs(
+    bundle: cyxla.Bundle,
+    records: Sequence[dict[str, Any] | None],
+    on_mismatch: Literal["recompile", "raise"],
+    workers: int | None,
+) -> list[tuple[cyxla.Executable, cyxla.CompileStatistics] | None]:
+    """Loads the executables of the records, on several threads when there is more than one.
+
+    Deserializing an executable releases the GIL and takes most of the time of a load, so the
+    programs overlap. A record that is `None` stays `None`. The first failure is raised once
+    every thread has finished. `workers` is the number of threads, which by default is one per
+    program up to the number of processors, and 1 loads them one after another.
+    """
+    present = [record for record in records if record is not None]
+    count = min(len(present), os.cpu_count() or 1) if workers is None else workers
+    if count <= 1 or len(present) <= 1:
+        results = [
+            cyxla.load_program(bundle, record, on_mismatch) for record in present
+        ]
+    else:
+        with ThreadPoolExecutor(count) as pool:
+            results = list(
+                pool.map(
+                    lambda record: cyxla.load_program(bundle, record, on_mismatch),
+                    present,
+                )
+            )
+    iterator = iter(results)
+    return [None if record is None else next(iterator) for record in records]
 
 
 def warm_up_point(variables: VariableLayout) -> Float[np.ndarray, " n"]:
