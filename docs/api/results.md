@@ -10,6 +10,8 @@
 
 ::: xipopt.CallbackStatistics
 
+::: xipopt.ProgramStatistics
+
 ::: xipopt.Program
 
 ::: xipopt.BuildStatistics

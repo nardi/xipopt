@@ -6,7 +6,16 @@ The description of an optimization problem.
 
 ::: xipopt.Variable
 
-::: xipopt.Constraint
+::: xipopt.Bounds
+
+::: xipopt.Evaluation
+
+::: xipopt.EvaluationFunction
+
+
+::: xipopt.evaluation_from_functions
+
+::: xipopt.no_objective
 
 ::: xipopt.ParametricFunction
 

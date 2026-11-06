@@ -24,9 +24,18 @@ def test_another_process_loads_without_the_problem(tmp_path: Path) -> None:
 
         import xipopt as xip
 
-        variables = xip.Variable(lower=1.0, upper=5.0, shape=(4,))
-        compiled = xip.load({str(path)!r}, variables)
-        solution = xip.solve(compiled, np.array([1.0, 5.0, 5.0, 1.0]))
+        variables = xip.Variable(shape=(4,))
+        compiled = xip.load(
+            {str(path)!r},
+            variables,
+            constraints=(np.zeros(()), np.zeros(())),
+        )
+        solution = xip.solve(
+            compiled,
+            np.array([1.0, 5.0, 5.0, 1.0]),
+            variable_bounds=xip.Bounds(1.0, 5.0),
+            constraint_bounds=xip.Bounds((25.0, 40.0), (np.inf, 40.0)),
+        )
         assert solution.status is xip.Status.SOLVE_SUCCEEDED, solution.status
         assert abs(solution.objective - 17.0140173) < 1e-6
         for module in ("asdex", "numba", "problems"):

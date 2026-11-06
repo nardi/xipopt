@@ -1,6 +1,6 @@
 """Optimization problems with known solutions, which the tests share."""
 
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypedDict
 
 import jax.numpy as jnp
 import numpy as np
@@ -8,14 +8,31 @@ import numpy as np
 import xipopt as xip
 
 
+class SolveBounds(TypedDict):
+    """The keyword arguments of `xip.solve` that carry the bounds."""
+
+    variable_bounds: xip.Bounds | None
+    constraint_bounds: xip.Bounds | None
+
+
 class KnownProblem(NamedTuple):
-    """A problem with its starting point and the solution published for it."""
+    """A problem with its bounds, its starting point and the solution published for it."""
 
     name: str
     problem: xip.Problem
     start: Any
     objective: float
     x: Any
+    variable_bounds: xip.Bounds | None
+    constraint_bounds: xip.Bounds | None
+
+    @property
+    def bounds(self) -> SolveBounds:
+        """The keyword arguments of `xip.solve` that carry the bounds."""
+        return SolveBounds(
+            variable_bounds=self.variable_bounds,
+            constraint_bounds=self.constraint_bounds,
+        )
 
 
 def hs071() -> KnownProblem:
@@ -25,12 +42,9 @@ def hs071() -> KnownProblem:
         return x[0] * x[3] * (x[0] + x[1] + x[2]) + x[2]
 
     problem = xip.Problem(
-        variables=xip.Variable(lower=1.0, upper=5.0, shape=(4,)),
+        xip.Variable(shape=(4,)),
         objective=objective,
-        constraints=(
-            xip.Constraint(lambda x, params: jnp.prod(x), lower=25.0),
-            xip.Constraint(lambda x, params: jnp.sum(x**2), lower=40.0, upper=40.0),
-        ),
+        constraints=(lambda x, params: jnp.prod(x), lambda x, params: jnp.sum(x**2)),
     )
     return KnownProblem(
         "hs071",
@@ -38,6 +52,8 @@ def hs071() -> KnownProblem:
         np.array([1.0, 5.0, 5.0, 1.0]),
         17.0140173,
         np.array([1.0, 4.74299963, 3.82114998, 1.37940829]),
+        xip.Bounds(1.0, 5.0),
+        xip.Bounds((25.0, 40.0), (np.inf, 40.0)),
     )
 
 
@@ -58,11 +74,9 @@ def hs035() -> KnownProblem:
         )
 
     problem = xip.Problem(
-        variables=xip.Variable(lower=0.0, shape=(3,)),
+        xip.Variable(shape=(3,)),
         objective=objective,
-        constraints=(
-            xip.Constraint(lambda x, params: x[0] + x[1] + 2.0 * x[2], upper=3.0),
-        ),
+        constraints=(lambda x, params: x[0] + x[1] + 2.0 * x[2],),
     )
     return KnownProblem(
         "hs035",
@@ -70,47 +84,55 @@ def hs035() -> KnownProblem:
         np.array([0.5, 0.5, 0.5]),
         1.0 / 9.0,
         np.array([4.0 / 3.0, 7.0 / 9.0, 4.0 / 9.0]),
+        xip.Bounds(lower=0.0),
+        xip.Bounds(upper=(3.0,)),
     )
 
 
 def hs021() -> KnownProblem:
     """Hock and Schittkowski problem 21, whose solution lies on a bound and a constraint."""
     problem = xip.Problem(
-        variables=xip.Variable(
-            lower=np.array([2.0, -50.0]), upper=np.array([50.0, 50.0])
-        ),
+        xip.Variable(shape=(2,)),
         objective=lambda x, params: 0.01 * x[0] ** 2 + x[1] ** 2 - 100.0,
-        constraints=(xip.Constraint(lambda x, params: 10.0 * x[0] - x[1], lower=10.0),),
+        constraints=(lambda x, params: 10.0 * x[0] - x[1],),
     )
     return KnownProblem(
-        "hs021", problem, np.array([-1.0, 1.0]), -99.96, np.array([2.0, 0.0])
+        "hs021",
+        problem,
+        np.array([-1.0, 1.0]),
+        -99.96,
+        np.array([2.0, 0.0]),
+        xip.Bounds(np.array([2.0, -50.0]), np.array([50.0, 50.0])),
+        xip.Bounds(lower=(10.0,)),
     )
 
 
 def hs006() -> KnownProblem:
     """Hock and Schittkowski problem 6, which has a nonlinear equality constraint."""
     problem = xip.Problem(
-        variables=xip.Variable(shape=(2,)),
+        xip.Variable(shape=(2,)),
         objective=lambda x, params: (1.0 - x[0]) ** 2,
-        constraints=(
-            xip.Constraint(
-                lambda x, params: 10.0 * (x[1] - x[0] ** 2), lower=0.0, upper=0.0
-            ),
-        ),
+        constraints=(lambda x, params: 10.0 * (x[1] - x[0] ** 2),),
     )
-    return KnownProblem("hs006", problem, np.array([-1.2, 1.0]), 0.0, np.ones(2))
+    return KnownProblem(
+        "hs006",
+        problem,
+        np.array([-1.2, 1.0]),
+        0.0,
+        np.ones(2),
+        None,
+        xip.Bounds(0.0, 0.0),
+    )
 
 
 def hs014() -> KnownProblem:
     """Hock and Schittkowski problem 14, with an equality and an inequality constraint."""
     problem = xip.Problem(
-        variables=xip.Variable(shape=(2,)),
+        xip.Variable(shape=(2,)),
         objective=lambda x, params: (x[0] - 2.0) ** 2 + (x[1] - 1.0) ** 2,
         constraints=(
-            xip.Constraint(lambda x, params: x[0] - 2.0 * x[1], lower=-1.0, upper=-1.0),
-            xip.Constraint(
-                lambda x, params: -(x[0] ** 2) / 4.0 - x[1] ** 2 + 1.0, lower=0.0
-            ),
+            lambda x, params: x[0] - 2.0 * x[1],
+            lambda x, params: -(x[0] ** 2) / 4.0 - x[1] ** 2 + 1.0,
         ),
     )
     return KnownProblem(
@@ -119,6 +141,8 @@ def hs014() -> KnownProblem:
         np.array([2.0, 2.0]),
         1.3934649,
         np.array([0.8228757, 0.9114378]),
+        None,
+        xip.Bounds((-1.0, 0.0), (-1.0, np.inf)),
     )
 
 
@@ -151,10 +175,14 @@ def bratu_control(size: int, coupling: float = 1.0) -> xip.Problem:
         return second - coupling * jnp.exp(u) - x["c"]
 
     return xip.Problem(
-        variables={"u": xip.Variable(shape=(size,)), "c": xip.Variable(shape=(size,))},
+        {"u": xip.Variable(shape=(size,)), "c": xip.Variable(shape=(size,))},
         objective=objective,
-        constraints=(xip.Constraint(equation, lower=0.0, upper=0.0),),
+        constraints=equation,
     )
+
+
+BRATU_BOUNDS = xip.Bounds(0.0, 0.0)
+"""The bounds of the constraint of `bratu_control`, which is an equation."""
 
 
 def bratu_pattern(size: int) -> tuple[np.ndarray, np.ndarray]:

@@ -23,6 +23,9 @@ PROVIDERS = TESTS_DIRECTORY / "providers"
 TARGET = np.array([4.0, 9.0])
 """The values that the squares of the variables approach."""
 
+VARIABLE_BOUNDS = xip.Bounds(0.5, 10.0)
+"""The bounds of the variables, which `solve` takes with the problem."""
+
 
 @pytest.fixture(scope="module")
 def square(
@@ -37,12 +40,12 @@ def square(
 def problem(square: Callable[..., Any]) -> xip.Problem:
     """Returns a problem whose objective squares the variables with the native function."""
 
-    def evaluate(x: Any, params: Any) -> Any:
+    def objective(x: Any, params: Any) -> Any:
         return jnp.sum((square(x) - TARGET) ** 2)
 
     return xip.Problem(
-        variables=xip.Variable(lower=0.5, upper=10.0, shape=(2,)),
-        objective=evaluate,
+        variables=xip.Variable(shape=(2,)),
+        objective=objective,
     )
 
 
@@ -55,7 +58,9 @@ OPTIONS = xip.CompileOptions(
 def test_problem_with_a_native_function_solves(square: Callable[..., Any]) -> None:
     """Checks that Ipopt solves with first and second derivatives through the function."""
     compiled = xip.compile(problem(square), options=OPTIONS)
-    solution = xip.solve(compiled, np.array([1.0, 1.0]))
+    solution = xip.solve(
+        compiled, np.array([1.0, 1.0]), variable_bounds=VARIABLE_BOUNDS
+    )
     assert solution.status is xip.Status.SOLVE_SUCCEEDED
     np.testing.assert_allclose(solution.x, [2.0, 3.0], atol=1e-6)
     assert solution.statistics.hessian.calls > 0
@@ -75,7 +80,7 @@ def test_saved_problem_needs_the_library_in_another_process(
 
         import xipopt as xip
 
-        variables = xip.Variable(lower=0.5, upper=10.0, shape=(2,))
+        variables = xip.Variable(shape=(2,))
         try:
             xip.load({str(path)!r}, variables)
         except Exception as error:
@@ -86,7 +91,11 @@ def test_saved_problem_needs_the_library_in_another_process(
 
         sys.path.insert(0, {str(PROVIDERS)!r})
         compiled = xip.load({str(path)!r}, variables, import_providers=True)
-        solution = xip.solve(compiled, np.array([1.0, 1.0]))
+        solution = xip.solve(
+            compiled,
+            np.array([1.0, 1.0]),
+            variable_bounds=xip.Bounds(0.5, 10.0),
+        )
         assert solution.status is xip.Status.SOLVE_SUCCEEDED, solution.status
         assert abs(solution.x[0] - 2.0) < 1e-6 and abs(solution.x[1] - 3.0) < 1e-6
         assert compiled.statistics.compiled == 0

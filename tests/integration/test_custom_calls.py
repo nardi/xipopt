@@ -47,7 +47,10 @@ def problem(provider: ModuleType) -> xip.Problem:
         )
         return jnp.sum(provider.cholesky(matrix) ** 2) + (x[0] - 1.0) ** 2
 
-    return xip.Problem(variables=xip.Variable(shape=(2,)), objective=objective)
+    return xip.Problem(
+        variables=xip.Variable(shape=(2,)),
+        objective=objective,
+    )
 
 
 def test_custom_calls_have_to_be_allowed(provider: ModuleType) -> None:

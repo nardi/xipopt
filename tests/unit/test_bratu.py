@@ -1,11 +1,13 @@
 """Tests of a banded problem, whose derivatives are sparse."""
 
+import dataclasses
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax.experimental import sparse
-from problems import bratu_control, bratu_pattern
+from problems import BRATU_BOUNDS, bratu_control, bratu_pattern
 
 import xipopt as xip
 
@@ -15,13 +17,15 @@ SIZE = 12
 def solve_with(problem: xip.Problem, derivatives: xip.Derivatives) -> xip.Solution:
     """Solves the Bratu problem with a way of computing derivatives."""
     return xip.solve(
-        problem, compile_options=xip.CompileOptions(derivatives=derivatives)
+        problem,
+        compile_options=xip.CompileOptions(derivatives=derivatives),
+        constraint_bounds=BRATU_BOUNDS,
     )
 
 
 def residual(solution: xip.Solution) -> float:
     """Returns the largest violation of the equation by a solution."""
-    return float(np.max(np.abs(solution.constraints[0])))
+    return float(np.max(np.abs(solution.constraints)))
 
 
 def test_detected_patterns_are_banded() -> None:
@@ -63,7 +67,8 @@ def test_given_pattern_matches_detected(
     """Checks that a pattern in any form gives the objective of the detected one."""
     reference = solve_with(bratu_control(SIZE), xip.Derivatives.DENSE)
     rows, columns = bratu_pattern(SIZE)
-    problem = bratu_control(SIZE)._replace(
+    problem = dataclasses.replace(
+        bratu_control(SIZE),
         jacobian_pattern=GIVEN_FORMS[form](rows, columns),
         hessian_pattern=(np.arange(2 * SIZE), np.arange(2 * SIZE)),
     )
@@ -87,7 +92,8 @@ def test_pattern_of_asdex_is_accepted() -> None:
     )
     reference = solve_with(bratu_control(SIZE), xip.Derivatives.DENSE)
     solution = solve_with(
-        bratu_control(SIZE)._replace(jacobian_pattern=pattern), xip.Derivatives.SPARSE
+        dataclasses.replace(bratu_control(SIZE), jacobian_pattern=pattern),
+        xip.Derivatives.SPARSE,
     )
     assert solution.objective == pytest.approx(reference.objective, rel=1e-8)
 
@@ -95,20 +101,21 @@ def test_pattern_of_asdex_is_accepted() -> None:
 def test_hessian_pattern_may_list_the_upper_triangle() -> None:
     """Checks that a Hessian pattern with only upper entries is mirrored."""
     upper = (np.array([0, 1, 5]), np.array([1, 2, 7]))
-    problem = bratu_control(SIZE)._replace(
+    problem = dataclasses.replace(
+        bratu_control(SIZE),
         hessian_pattern=(
             np.concatenate([np.arange(2 * SIZE), upper[0]]),
             np.concatenate([np.arange(2 * SIZE), upper[1]]),
-        )
+        ),
     )
     compiled = xip.compile(problem, options=xip.CompileOptions())
     assert compiled.structure.hessian_rows.size == 2 * SIZE + 3
     assert np.all(compiled.structure.hessian_rows >= compiled.structure.hessian_columns)
-    assert xip.solve(compiled).status.succeeded
+    assert xip.solve(compiled, constraint_bounds=BRATU_BOUNDS).status.succeeded
 
 
 def test_bounds_on_a_larger_problem() -> None:
     """Checks that a problem with a few hundred variables solves with sparse derivatives."""
-    solution = xip.solve(bratu_control(150))
+    solution = xip.solve(bratu_control(150), constraint_bounds=BRATU_BOUNDS)
     assert solution.status.succeeded
     assert residual(solution) < 1e-6

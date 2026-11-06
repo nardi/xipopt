@@ -22,7 +22,10 @@ def problem_with_check(check: Any) -> xip.Problem:
         jax.debug.callback(check, x)
         return (x[0] - 1.0) ** 2
 
-    return xip.Problem(variables=xip.Variable(shape=(1,)), objective=objective)
+    return xip.Problem(
+        variables=xip.Variable(shape=(1,)),
+        objective=objective,
+    )
 
 
 def test_callbacks_see_the_points_of_a_solve() -> None:
