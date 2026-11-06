@@ -8,6 +8,7 @@ number of threads.
 Usage: python benchmarks/loading.py [newton iterations] [repetitions]
 """
 
+import itertools
 import statistics
 import sys
 import time
@@ -46,21 +47,27 @@ def newton_problem(iterations: int) -> xip.Problem:
 
     return xip.Problem(
         variables=xip.Variable(shape=(3,)),
-        objective=evaluate,
-        constraints=(xip.Constraint(constraint, upper=5.0),),
+        evaluate=xip.evaluation_from_functions(
+            objective=evaluate, constraints=constraint
+        ),
     )
 
 
 def main() -> None:
-    """Saves the problem with and without source locations and times the loading of each."""
+    """Saves the problem with and without source locations, and with each kind of Hessian.
+
+    The limited-memory Hessian leaves one program and the exact Hessian adds a second, so
+    the runs show what loading on several threads can gain. The time of each load is the
+    median.
+    """
     iterations = int(sys.argv[1]) if len(sys.argv) > 1 else 40
     repetitions = int(sys.argv[2]) if len(sys.argv) > 2 else 5
     problem = newton_problem(iterations)
-    for debug_info in (True, False):
+    for hessian, debug_info in itertools.product(xip.Hessian, (True, False)):
         options = xip.CompileOptions(
             disk_cache=False,
             derivatives=xip.Derivatives.DENSE,
-            hessian=xip.Hessian.LIMITED_MEMORY,
+            hessian=hessian,
             debug_info=debug_info,
         )
         start = time.perf_counter()
@@ -71,14 +78,22 @@ def main() -> None:
             executable is not None for executable in compiled.native.executables
         )
         print(
-            f"debug_info={debug_info}: compile {compile_seconds:.1f} s, "
+            f"{hessian.name}, debug_info={debug_info}: compile {compile_seconds:.1f} s, "
             f"file {len(data) / 1e6:.2f} MB, {count} programs"
         )
+        # The constraint is one array of length one, so its tree is that array.
+        constraints = np.zeros(1)
         for workers in (1, None):
             times = []
             for _ in range(repetitions):
                 start = time.perf_counter()
-                xip.loads(data, problem.variables, warm_up=False, workers=workers)
+                xip.loads(
+                    data,
+                    problem.variables,
+                    constraints=constraints,
+                    warm_up=False,
+                    workers=workers,
+                )
                 times.append(time.perf_counter() - start)
             label = "default" if workers is None else workers
             print(f"  workers {label}: {statistics.median(times) * 1000:.0f} ms")

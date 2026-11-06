@@ -25,8 +25,9 @@ from cython.cimports.cyxla import (
     free_aligned,
     now,
 )
+from cython.cimports.libc.math import isfinite
 from cython.cimports.libc.stdlib import calloc, free, malloc
-from cython.cimports.libc.string import memcpy
+from cython.cimports.libc.string import memcmp, memcpy
 from cython.cimports.xipopt._blas import (
     lbt_forward,
     openblas_set_num_threads,
@@ -48,13 +49,16 @@ from cython.cimports.xipopt._ipopt import (
 )
 from cython.cimports.xipopt._platform import xipopt_library_path
 from cython.cimports.xipopt._solver import (
-    CONSTRAINTS,
-    GRADIENT,
+    CALLBACK_COUNT,
+    CONSTRAINTS_CALLBACK,
+    FIRST_ORDER,
+    GRADIENT_CALLBACK,
     HESSIAN,
+    HESSIAN_CALLBACK,
     INPUT_COUNT,
-    JACOBIAN,
+    JACOBIAN_CALLBACK,
     MULTIPLIERS,
-    OBJECTIVE,
+    OBJECTIVE_CALLBACK,
     OBJECTIVE_FACTOR,
     PARAMETERS,
     PROGRAM_COUNT,
@@ -120,10 +124,16 @@ class NativeResult(NamedTuple):
     lower_multipliers: np.ndarray
     upper_multipliers: np.ndarray
     iterations: int
-    calls: tuple[int, ...]
-    """Executions of each program, in the order of `PROGRAM_NAMES`."""
+    callback_calls: tuple[int, ...]
+    """Calls of each callback of Ipopt: objective, gradient, constraints, Jacobian, Hessian."""
+    callback_hits: tuple[int, ...]
+    """Calls of each callback that were answered from the cache and ran no program."""
+    executions: tuple[int, ...]
+    """Executions of each program, first-order and Hessian."""
     seconds: tuple[float, ...]
     """Seconds spent executing each program."""
+    unused_derivatives: int
+    """Points at which the first-order program computed derivatives that Ipopt never asked for."""
 
 
 @cython.cfunc
@@ -132,10 +142,9 @@ class NativeResult(NamedTuple):
 def run_program(
     state: cython.pointer[SolverState], program: cython.int, destination: cython.p_void
 ) -> ipbool:
-    """Executes a program into `destination` and returns whether it succeeded.
+    """Executes the Hessian program into `destination` and returns whether it succeeded.
 
-    A program that was not compiled is one that has nothing to compute, such as the
-    constraints of a problem without any, and counts as success.
+    A program that was not compiled counts as success, since there is nothing to compute.
     """
     if state.programs[program].handle == cython.NULL:
         return 1
@@ -148,9 +157,89 @@ def run_program(
         outputs,
         state.zero_copy,
     )
-    state.calls[program] += 1
+    state.executions[program] += 1
     state.seconds[program] += now() - start
     return status == 0
+
+
+@cython.cfunc
+@cython.nogil
+@cython.exceptval(check=False)
+def all_finite(values: cython.pointer[cython.double], size: cython.int) -> ipbool:
+    """Returns whether none of the values is infinite or not a number."""
+    index: cython.int
+    for index in range(size):
+        if not isfinite(values[index]):
+            return 0
+    return 1
+
+
+@cython.cfunc
+@cython.nogil
+@cython.exceptval(check=False)
+def execute_first_order(
+    state: cython.pointer[SolverState], x: cython.pointer[ipnumber]
+) -> ipbool:
+    """Runs the first-order program at `x` and keeps its outputs in the cache.
+
+    The point counts as failed when the program fails or when any output is infinite or not
+    a number. Ipopt then shortens its step if it asked for a value at a trial point, as it
+    does for any point where the functions cannot be evaluated.
+    """
+    n: cython.int = state.variable_count
+    # The derivatives that the previous point computed and Ipopt never asked for are wasted.
+    if state.cache_valid and not state.cache_failed and not state.derivatives_requested:
+        state.unused_derivatives += 1
+    memcpy(state.inputs[VARIABLES].host, x, n * cython.sizeof(ipnumber))
+    memcpy(state.cached_x, x, n * cython.sizeof(ipnumber))
+    outputs: cython.p_void[MAX_OUTPUTS]
+    outputs[0] = state.objective_value
+    outputs[1] = state.gradient_values
+    outputs[2] = state.constraint_values if state.constraint_count > 0 else cython.NULL
+    outputs[3] = state.jacobian_values if state.jacobian_size > 0 else cython.NULL
+    start: cython.double = now()
+    status: cython.int = execute(
+        cython.address(state.programs[FIRST_ORDER]),
+        state.inputs,
+        outputs,
+        state.zero_copy,
+    )
+    state.executions[FIRST_ORDER] += 1
+    state.seconds[FIRST_ORDER] += now() - start
+    state.cache_valid = 1
+    state.derivatives_requested = 0
+    state.cache_failed = (
+        status != 0
+        or not all_finite(state.objective_value, 1)
+        or not all_finite(state.gradient_values, n)
+        or not all_finite(state.constraint_values, state.constraint_count)
+        or not all_finite(state.jacobian_values, state.jacobian_size)
+    )
+    return not state.cache_failed
+
+
+@cython.cfunc
+@cython.nogil
+@cython.exceptval(check=False)
+def serve(
+    state: cython.pointer[SolverState],
+    callback: cython.int,
+    x: cython.pointer[ipnumber],
+) -> ipbool:
+    """Stores the outputs at `x` in the cache, counts the call and returns whether they are usable.
+
+    The point is compared bit by bit with the one in the cache and not through Ipopt's
+    `new_x` flag, since the restoration phase and rejected trial points make that flag a
+    poor guide to whether the point changed.
+    """
+    state.callback_calls[callback] += 1
+    if state.cache_valid and (
+        memcmp(state.cached_x, x, state.variable_count * cython.sizeof(ipnumber)) == 0
+    ):
+        state.callback_hits[callback] += 1
+    else:
+        execute_first_order(state, x)
+    return not state.cache_failed
 
 
 @cython.cfunc
@@ -166,8 +255,10 @@ def evaluate_objective(
     state: cython.pointer[SolverState] = cython.cast(
         cython.pointer[SolverState], user_data
     )
-    memcpy(state.inputs[VARIABLES].host, x, n * cython.sizeof(ipnumber))
-    return run_program(state, OBJECTIVE, objective)
+    if not serve(state, OBJECTIVE_CALLBACK, x):
+        return 0
+    objective[0] = state.objective_value[0]
+    return 1
 
 
 @cython.cfunc
@@ -183,8 +274,11 @@ def evaluate_gradient(
     state: cython.pointer[SolverState] = cython.cast(
         cython.pointer[SolverState], user_data
     )
-    memcpy(state.inputs[VARIABLES].host, x, n * cython.sizeof(ipnumber))
-    return run_program(state, GRADIENT, gradient)
+    if not serve(state, GRADIENT_CALLBACK, x):
+        return 0
+    state.derivatives_requested = 1
+    memcpy(gradient, state.gradient_values, n * cython.sizeof(ipnumber))
+    return 1
 
 
 @cython.cfunc
@@ -201,8 +295,10 @@ def evaluate_constraints(
     state: cython.pointer[SolverState] = cython.cast(
         cython.pointer[SolverState], user_data
     )
-    memcpy(state.inputs[VARIABLES].host, x, n * cython.sizeof(ipnumber))
-    return run_program(state, CONSTRAINTS, constraints)
+    if not serve(state, CONSTRAINTS_CALLBACK, x):
+        return 0
+    memcpy(constraints, state.constraint_values, m * cython.sizeof(ipnumber))
+    return 1
 
 
 @cython.cfunc
@@ -227,8 +323,11 @@ def evaluate_jacobian(
         memcpy(rows, state.jacobian_rows, size * cython.sizeof(ipindex))
         memcpy(columns, state.jacobian_columns, size * cython.sizeof(ipindex))
         return 1
-    memcpy(state.inputs[VARIABLES].host, x, n * cython.sizeof(ipnumber))
-    return run_program(state, JACOBIAN, values)
+    if not serve(state, JACOBIAN_CALLBACK, x):
+        return 0
+    state.derivatives_requested = 1
+    memcpy(values, state.jacobian_values, size * cython.sizeof(ipnumber))
+    return 1
 
 
 @cython.cfunc
@@ -257,6 +356,7 @@ def evaluate_hessian(
         memcpy(rows, state.hessian_rows, size * cython.sizeof(ipindex))
         memcpy(columns, state.hessian_columns, size * cython.sizeof(ipindex))
         return 1
+    state.callback_calls[HESSIAN_CALLBACK] += 1
     memcpy(state.inputs[VARIABLES].host, x, n * cython.sizeof(ipnumber))
     cython.cast(cython.pointer[ipnumber], state.inputs[OBJECTIVE_FACTOR].host)[0] = (
         objective_factor
@@ -361,30 +461,26 @@ def float_array(values: object, size: cython.Py_ssize_t, name: str) -> object:
 class NativeProblem:
     """The programs and index arrays of a problem, with the buffers their callbacks share.
 
-    `executables` holds the programs in the order objective, gradient, constraints,
-    Jacobian and Hessian of the Lagrangian, where `None` leaves a program out. Programs read
-    the variables and the parameters, and the Hessian program also the objective factor and
-    the constraint multipliers. The Jacobian and Hessian entries follow the given row and
-    column indices, and the Hessian holds the lower triangle only.
+    `executables` has the first-order program and the Hessian of the Lagrangian, where
+    `None` leaves out the Hessian. Programs read the variables and the parameters, and the
+    Hessian program also the objective factor and the constraint multipliers. The first-order
+    program writes the objective, the gradient, the constraints and the Jacobian values, and
+    the callbacks that evaluate them at one point share one execution. The Jacobian and Hessian
+    entries follow the given row and column indices, and the Hessian contains the lower triangle
+    only.
     """
 
     state: cython.pointer[SolverState]
     executables = cython.declare(tuple, visibility="readonly")
     """The executables, which have to outlive the handles that the state holds."""
-    variable_lower: object
-    variable_upper: object
-    constraint_lower: object
-    constraint_upper: object
     current_observer: object
     observer_error: object
 
     def __cinit__(
         self,
         executables: Sequence[Executable | None],
-        variable_lower: object,
-        variable_upper: object,
-        constraint_lower: object,
-        constraint_upper: object,
+        variable_count: cython.int,
+        constraint_count: cython.int,
         parameter_size: cython.int,
         jacobian_rows: object,
         jacobian_columns: object,
@@ -398,20 +494,7 @@ class NativeProblem:
         self.observer_error = None
         if len(self.executables) != PROGRAM_COUNT:
             raise ValueError(f"Expected {PROGRAM_COUNT} programs.")
-        variable_count: cython.int = len(variable_lower)
-        constraint_count: cython.int = len(constraint_lower)
-        self.variable_lower = float_array(
-            variable_lower, variable_count, "lower bounds"
-        )
-        self.variable_upper = float_array(
-            variable_upper, variable_count, "upper bounds"
-        )
-        # Ipopt reads at least one entry of every bound array, so empty ones are padded.
         padded: cython.int = max(constraint_count, 1)
-        self.constraint_lower = np.zeros(padded)
-        self.constraint_upper = np.zeros(padded)
-        self.constraint_lower[:constraint_count] = constraint_lower
-        self.constraint_upper[:constraint_count] = constraint_upper
 
         jacobian_size: cython.int = len(jacobian_rows)
         hessian_size: cython.int = len(hessian_rows)
@@ -449,23 +532,58 @@ class NativeProblem:
                 state.inputs[index].host, PJRT_Buffer_Type_F64, sizes[index]
             )
 
-        outputs: cython.int[PROGRAM_COUNT]
-        outputs[OBJECTIVE] = 1
-        outputs[GRADIENT] = variable_count
-        outputs[CONSTRAINTS] = constraint_count
-        outputs[JACOBIAN] = jacobian_size
-        outputs[HESSIAN] = hessian_size
+        # The buffers of the first-order outputs are padded to at least one entry, so no
+        # pointer is NULL where a program may write.
+        state.cached_x = cython.cast(
+            cython.pointer[cython.double],
+            calloc(max(variable_count, 1), cython.sizeof(ipnumber)),
+        )
+        state.objective_value = cython.cast(
+            cython.pointer[cython.double], calloc(1, cython.sizeof(ipnumber))
+        )
+        state.gradient_values = cython.cast(
+            cython.pointer[cython.double],
+            calloc(max(variable_count, 1), cython.sizeof(ipnumber)),
+        )
+        state.constraint_values = cython.cast(
+            cython.pointer[cython.double], calloc(padded, cython.sizeof(ipnumber))
+        )
+        state.jacobian_values = cython.cast(
+            cython.pointer[cython.double],
+            calloc(max(jacobian_size, 1), cython.sizeof(ipnumber)),
+        )
+        if (
+            state.cached_x == cython.NULL
+            or state.objective_value == cython.NULL
+            or state.gradient_values == cython.NULL
+            or state.constraint_values == cython.NULL
+            or state.jacobian_values == cython.NULL
+        ):
+            raise MemoryError()
+
         executable: Executable
-        for index in range(PROGRAM_COUNT):
-            if self.executables[index] is None:
-                continue
-            executable = self.executables[index]
-            state.programs[index].handle = executable.handle
-            state.programs[index].num_inputs = (
-                INPUT_COUNT if index == HESSIAN else OBJECTIVE_FACTOR
-            )
-            state.programs[index].num_outputs = 1
-            state.programs[index].output_bytes[0] = outputs[index] * cython.sizeof(
+        if self.executables[FIRST_ORDER] is None:
+            raise ValueError("The first-order program is required.")
+        executable = self.executables[FIRST_ORDER]
+        state.programs[FIRST_ORDER].handle = executable.handle
+        state.programs[FIRST_ORDER].num_inputs = OBJECTIVE_FACTOR
+        state.programs[FIRST_ORDER].num_outputs = 4
+        state.programs[FIRST_ORDER].output_bytes[0] = cython.sizeof(ipnumber)
+        state.programs[FIRST_ORDER].output_bytes[1] = variable_count * cython.sizeof(
+            ipnumber
+        )
+        state.programs[FIRST_ORDER].output_bytes[2] = constraint_count * cython.sizeof(
+            ipnumber
+        )
+        state.programs[FIRST_ORDER].output_bytes[3] = jacobian_size * cython.sizeof(
+            ipnumber
+        )
+        if self.executables[HESSIAN] is not None:
+            executable = self.executables[HESSIAN]
+            state.programs[HESSIAN].handle = executable.handle
+            state.programs[HESSIAN].num_inputs = INPUT_COUNT
+            state.programs[HESSIAN].num_outputs = 1
+            state.programs[HESSIAN].output_bytes[0] = hessian_size * cython.sizeof(
                 ipnumber
             )
 
@@ -481,6 +599,11 @@ class NativeProblem:
         free(state.jacobian_columns)
         free(state.hessian_rows)
         free(state.hessian_columns)
+        free(state.cached_x)
+        free(state.objective_value)
+        free(state.gradient_values)
+        free(state.constraint_values)
+        free(state.jacobian_values)
         free(state)
 
     def notify(
@@ -541,24 +664,37 @@ class NativeProblem:
         self,
         start: object,
         parameters: object,
+        variable_lower: object,
+        variable_upper: object,
+        constraint_lower: object,
+        constraint_upper: object,
         settings: Sequence[tuple[str, IpoptValue]] = (),
         warm_start: Multipliers | None = None,
         observer: Callable[[IterationState], bool] | None = None,
     ) -> NativeResult:
-        """Solves from `start` for the given parameters and returns the result.
+        """Solves from `start` for the given parameters and bounds and returns the result.
 
-        `settings` are Ipopt options. The solve stops early when `observer` returns false.
+        The bounds are flat vectors, one entry per variable or per constraint. `settings` are
+        Ipopt options. The solve stops early when `observer` returns false.
         With `warm_start`, its multipliers are the starting multipliers, which Ipopt only
         reads when its option `warm_start_init_point` is `yes`.
         """
         with SOLVE_LOCK:
-            return self.solve_locked(start, parameters, settings, warm_start, observer)
+            return self.solve_locked(
+                start,
+                parameters,
+                (variable_lower, variable_upper, constraint_lower, constraint_upper),
+                settings,
+                warm_start,
+                observer,
+            )
 
     @cython.cfunc
     def solve_locked(
         self,
         start: object,
         parameters: object,
+        bounds: tuple,
         settings: Sequence[tuple[str, IpoptValue]],
         warm_start: Multipliers | None,
         observer: Callable[[IterationState], bool] | None,
@@ -574,6 +710,17 @@ class NativeProblem:
 
         variables = float_array(start, variable_count, "starting point")
         parameter_values = float_array(parameters, parameter_size, "parameters")
+        variable_lower = float_array(bounds[0], variable_count, "lower variable bounds")
+        variable_upper = float_array(bounds[1], variable_count, "upper variable bounds")
+        # Ipopt reads at least one entry of every bound array, so empty ones are padded.
+        constraint_lower = np.zeros(padded)
+        constraint_upper = np.zeros(padded)
+        constraint_lower[:constraint_count] = float_array(
+            bounds[2], constraint_count, "lower constraint bounds"
+        )
+        constraint_upper[:constraint_count] = float_array(
+            bounds[3], constraint_count, "upper constraint bounds"
+        )
         constraints = np.zeros(padded)
         constraint_multipliers = np.zeros(padded)
         lower_multipliers = np.zeros(variable_count)
@@ -595,20 +742,29 @@ class NativeProblem:
         multiplier_view: cython.double[::1] = constraint_multipliers
         lower_view: cython.double[::1] = lower_multipliers
         upper_view: cython.double[::1] = upper_multipliers
-        variable_lower_view: cython.double[::1] = self.variable_lower
-        variable_upper_view: cython.double[::1] = self.variable_upper
-        constraint_lower_view: cython.double[::1] = self.constraint_lower
-        constraint_upper_view: cython.double[::1] = self.constraint_upper
+        variable_lower_view: cython.double[::1] = variable_lower
+        variable_upper_view: cython.double[::1] = variable_upper
+        constraint_lower_view: cython.double[::1] = constraint_lower
+        constraint_upper_view: cython.double[::1] = constraint_upper
 
         memcpy(
             state.inputs[PARAMETERS].host,
             cython.address(parameter_view[0]),
             parameter_size * cython.sizeof(ipnumber),
         )
+        for index in range(CALLBACK_COUNT):
+            state.callback_calls[index] = 0
+            state.callback_hits[index] = 0
         for index in range(PROGRAM_COUNT):
-            state.calls[index] = 0
+            state.executions[index] = 0
             state.seconds[index] = 0.0
+        state.unused_derivatives = 0
         state.iterations = 0
+        # The parameters can differ from the last solve while the first point is the same,
+        # so outputs from before would be wrong.
+        state.cache_valid = 0
+        state.cache_failed = 0
+        state.derivatives_requested = 0
 
         problem: IpoptProblem = CreateIpoptProblem(
             variable_count,
@@ -670,8 +826,17 @@ class NativeProblem:
             lower_multipliers=lower_multipliers,
             upper_multipliers=upper_multipliers,
             iterations=state.iterations,
-            calls=tuple([state.calls[index] for index in range(PROGRAM_COUNT)]),
+            callback_calls=tuple(
+                [state.callback_calls[index] for index in range(CALLBACK_COUNT)]
+            ),
+            callback_hits=tuple(
+                [state.callback_hits[index] for index in range(CALLBACK_COUNT)]
+            ),
+            executions=tuple(
+                [state.executions[index] for index in range(PROGRAM_COUNT)]
+            ),
             seconds=tuple([state.seconds[index] for index in range(PROGRAM_COUNT)]),
+            unused_derivatives=state.unused_derivatives,
         )
 
 

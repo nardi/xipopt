@@ -12,7 +12,7 @@ import xipopt as xip
 OPTIONS = xip.CompileOptions(
     host_callbacks=True, derivatives=xip.Derivatives.DENSE, disk_cache=False
 )
-"""Compile options for callbacks, with dense derivatives since `asdex` does not know them."""
+"""Compile options for callbacks, with dense derivatives since `asdex` cannot trace them."""
 
 
 def problem_with_check(check: Any) -> xip.Problem:
@@ -22,11 +22,14 @@ def problem_with_check(check: Any) -> xip.Problem:
         jax.debug.callback(check, x)
         return (x[0] - 1.0) ** 2
 
-    return xip.Problem(variables=xip.Variable(shape=(1,)), objective=objective)
+    return xip.Problem(
+        variables=xip.Variable(shape=(1,)),
+        objective=objective,
+    )
 
 
 def test_callbacks_see_the_points_of_a_solve() -> None:
-    """Checks that a problem with a callback solves and that the callback sees the iterates."""
+    """Checks that a problem with a callback solves and that the callback receives the iterates."""
     points: list[float] = []
     compiled = xip.compile(
         problem_with_check(lambda x: points.append(float(x[0]))), options=OPTIONS

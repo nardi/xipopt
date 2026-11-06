@@ -18,6 +18,7 @@ def test_solution_matches_publication(name: str, derivatives: xip.Derivatives) -
         known.problem,
         known.start,
         compile_options=xip.CompileOptions(derivatives=derivatives),
+        **known.bounds,
     )
     assert solution.status is xip.Status.SOLVE_SUCCEEDED
     assert solution.status.succeeded
@@ -34,6 +35,7 @@ def test_limited_memory_reaches_the_same_objective(name: str) -> None:
         known.start,
         options=xip.SolveOptions(tolerance=1e-9),
         compile_options=xip.CompileOptions(hessian=xip.Hessian.LIMITED_MEMORY),
+        **known.bounds,
     )
     assert solution.status.succeeded
     assert solution.objective == pytest.approx(known.objective, abs=1e-4)
@@ -43,12 +45,12 @@ def test_limited_memory_reaches_the_same_objective(name: str) -> None:
 def test_solution_describes_the_solve() -> None:
     """Checks the constraints, multipliers and counters of a solution of HS071."""
     known = PROBLEMS["hs071"]
-    solution = xip.solve(xip.compile(known.problem), known.start)
+    solution = xip.solve(xip.compile(known.problem), known.start, **known.bounds)
     product, squares = solution.constraints
     assert product >= 25.0 - 1e-6
     assert squares == pytest.approx(40.0)
     assert len(solution.constraint_multipliers) == 2
-    # The first variable sits on its lower bound, which is the only active bound.
+    # The first variable is at its lower bound, which is the only active bound.
     assert solution.lower_multipliers[0] > 1e-3
     assert np.all(solution.upper_multipliers < 1e-6)
     assert solution.iterations == 8
