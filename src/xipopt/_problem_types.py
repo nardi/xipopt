@@ -89,12 +89,26 @@ class EvaluationFunction(Protocol):
     def __call__(self, x: Any, params: Any, /) -> Evaluation: ...
 
 
+class StatefulEvaluationFunction(Protocol):
+    """A JAX function `f(x, params, state)` that also reads and returns a state.
+
+    `state` has the structure of `StatefulProblem.state`. The function returns the
+    evaluation and the new state, with the same structure and shapes. The state never enters
+    a derivative, so it may only choose where an inner iteration starts and not what it
+    converges to.
+    """
+
+    def __call__(
+        self, x: Any, params: Any, state: Any, /
+    ) -> tuple[Evaluation, Any]: ...
+
+
 Pattern = Any
 """Where a derivative can be nonzero, given in one of four forms.
 
 - A boolean matrix, `Bool[np.ndarray, "rows columns"]`.
 - A pair `(rows, columns)` of integer vectors, one entry per nonzero.
-- An `asdex.SparsityPattern`, which has to carry its `input_avals` when it is built.
+- An `asdex.SparsityPattern`, which has to be built with its `input_avals`.
 - A `jax.experimental.sparse.BCOO` matrix, whose stored entries are the nonzeros.
 
 The rows of a Jacobian pattern are the entries of the constraints in the order of the leaves
@@ -185,6 +199,30 @@ class Problem:
         object.__setattr__(self, "hessian_pattern", hessian_pattern)
 
 
+class StatefulProblem(NamedTuple):
+    """A `Problem` whose evaluation reads the state of the previous point.
+
+    xipopt keeps the state between evaluations. Every successful evaluation of the objective
+    and constraints replaces it by the state that `evaluate` returned. A solve starts from
+    `state`, or from the state of the `Solution` that it warm starts from. Results then
+    depend on the order of evaluations, so use the state only for the starting guess of an
+    inner solve that converges to its tolerance, such as a Newton iteration. A `Problem` has
+    no state and evaluates every point the same way.
+    """
+
+    variables: PyTree[Variable]
+    """A pytree with a `Variable` at every leaf, which fixes the structure of `x`."""
+    evaluate: StatefulEvaluationFunction
+    """The function that returns the evaluation and the new state."""
+    state: PyTree[ArrayLike]
+    """The initial state, a nonempty pytree of floating point arrays."""
+    sense: Sense = Sense.MINIMIZE
+    jacobian_pattern: Pattern | None = None
+    """Where the Jacobian of the constraints is nonzero, or `None` to detect it."""
+    hessian_pattern: Pattern | None = None
+    """Where the Hessian of the Lagrangian is nonzero, or `None` to detect it."""
+
+
 def evaluation_from_functions(
     *, objective: ParametricFunction, constraints: PyTree[ParametricFunction] = ()
 ) -> EvaluationFunction:
@@ -192,9 +230,10 @@ def evaluation_from_functions(
 
     Each function takes `(x, params)`. `constraints` is a pytree of functions, such as a
     tuple or a dict, and the arrays they return have that structure in
-    `Evaluation.constraints`. The functions run on the same arguments, so work that they do
-    not share is done once for each. A problem that wants to share work writes its own
-    `evaluate`. A problem without an objective passes `no_objective`.
+    `Evaluation.constraints`. The functions run on the same arguments, so work that they
+    do not share is done once for each. A problem whose objective and constraints share
+    work writes its own `evaluate`. A problem without an objective passes
+    `no_objective`.
     """
 
     def evaluate(x: Any, params: Any, /) -> Evaluation:

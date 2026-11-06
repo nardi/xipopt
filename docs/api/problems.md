@@ -8,10 +8,13 @@ The description of an optimization problem.
 
 ::: xipopt.Bounds
 
+::: xipopt.StatefulProblem
+
 ::: xipopt.Evaluation
 
 ::: xipopt.EvaluationFunction
 
+::: xipopt.StatefulEvaluationFunction
 
 ::: xipopt.evaluation_from_functions
 

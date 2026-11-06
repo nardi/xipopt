@@ -8,18 +8,19 @@ import cyxla
 import jax
 import numpy as np
 from cyxla import Executable, LoweredProgram
-from jaxtyping import PyTree
+from jaxtyping import Float, PyTree
 
 from xipopt import _cache, _programs
 from xipopt._layout import (
     ParamsLayout,
     TreeLayout,
     params_layout,
+    state_layout,
     variable_layout,
 )
 from xipopt._options import CompileOptions, Hessian
 from xipopt._patterns import as_entries
-from xipopt._problem_types import Problem
+from xipopt._problem_types import Problem, StatefulProblem
 from xipopt._solver import NativeProblem
 from xipopt._types import BuildStatistics, Program, Sense
 
@@ -27,7 +28,7 @@ from xipopt._types import BuildStatistics, Program, Sense
 class CompiledProblem(NamedTuple):
     """A problem whose functions are compiled, ready to solve."""
 
-    problem: Problem | None
+    problem: Problem | StatefulProblem | None
     """The problem that was compiled, or `None` for one that `load` returned."""
     options: CompileOptions
     sense: Sense
@@ -40,6 +41,10 @@ class CompiledProblem(NamedTuple):
     structure: _cache.Structure
     """Where the Jacobian and the Hessian have entries, in the order of their values."""
     statistics: BuildStatistics
+    state: ParamsLayout | None = None
+    """The layout of the state of a stateful problem, or `None` for a problem without state."""
+    initial_state: Float[np.ndarray, " s"] = np.zeros(0)
+    """The flat state that a solve starts from, empty for a problem without state."""
 
     def __reduce__(self) -> Never:
         """Refuses to pickle, since a compiled problem holds native buffers.
@@ -55,7 +60,7 @@ class CompiledProblem(NamedTuple):
 
 
 def compile(  # noqa: A001
-    problem: Problem,
+    problem: Problem | StatefulProblem,
     params: PyTree[Any] = None,
     options: CompileOptions = CompileOptions(),
 ) -> CompiledProblem:
@@ -63,7 +68,9 @@ def compile(  # noqa: A001
 
     `params` may hold arrays or `jax.ShapeDtypeStruct`s, since only their structure,
     shapes and types matter. The result solves with any parameter values of that layout.
-    The programs run in 64-bit floats, whatever the setting of `jax.enable_x64` is.
+    The programs run in 64-bit floats, whatever the setting of `jax.enable_x64` is. A
+    `StatefulProblem` compiles to programs that read and write its state, which `solve`
+    resets at the start of every solve.
     """
     cyxla.initialize(platform="cpu")
     with jax.enable_x64(True):
@@ -71,16 +78,19 @@ def compile(  # noqa: A001
 
 
 def build(
-    problem: Problem, params: PyTree[Any], options: CompileOptions
+    problem: Problem | StatefulProblem, params: PyTree[Any], options: CompileOptions
 ) -> CompiledProblem:
     """Builds a problem in 64-bit mode, from the cache where it can."""
     start = time.perf_counter()
     variables = variable_layout(problem.variables)
     layout = params_layout(params)
-    functions = _programs.flat_functions(problem, variables, layout)
+    state = None if isinstance(problem, Problem) else state_layout(problem.state)
+    functions = _programs.flat_functions(problem, variables, layout, state)
     constraint_size = functions.constraint_size
     multiplier_size = max(constraint_size, 1)
-    arguments = _programs.abstract_arguments(variables, layout, multiplier_size)
+    arguments = _programs.abstract_arguments(
+        variables, functions.parameter_size, multiplier_size
+    )
     n = variables.size
 
     jacobian_given = (
@@ -112,7 +122,7 @@ def build(
     if lowered is None or structure is None or len(lowered) != len(Program):
         step = time.perf_counter()
         derivatives = _programs.build_derivatives(
-            problem, functions, variables, layout, multiplier_size, options
+            problem, functions, variables, multiplier_size, options
         )
         detect_seconds = time.perf_counter() - step
         structure = structure_of(derivatives)
@@ -130,9 +140,15 @@ def build(
             "entries, which Ipopt does not accept."
         )
     executables, compile_statistics = compile_programs(lowered, disk_cache)
-    check_output_sizes(executables, n, constraint_size, structure)
+    check_output_sizes(executables, n, constraint_size, structure, functions.state_size)
     native = make_native(
-        executables, variables, layout, functions.constraints, structure, options
+        executables,
+        variables,
+        layout,
+        functions.constraints,
+        structure,
+        options,
+        functions.state_size,
     )
     return CompiledProblem(
         problem=problem,
@@ -150,6 +166,12 @@ def build(
             lowered_count,
             time.perf_counter() - start,
         ),
+        state=state,
+        initial_state=(
+            np.zeros(0)
+            if state is None or isinstance(problem, Problem)
+            else state.flatten(problem.state)
+        ),
     )
 
 
@@ -160,8 +182,13 @@ def make_native(
     constraints: TreeLayout,
     structure: _cache.Structure,
     options: CompileOptions,
+    state_size: int = 0,
 ) -> NativeProblem:
-    """Returns the native problem for compiled programs and a sparsity structure."""
+    """Returns the native problem for compiled programs and a sparsity structure.
+
+    `layout` describes the parameters, and `state_size` is the length of the state that
+    follows them in the parameter input of the programs.
+    """
     return NativeProblem(
         executables,
         variables.size,
@@ -172,6 +199,7 @@ def make_native(
         structure.hessian_rows,
         structure.hessian_columns,
         options.zero_copy,
+        state_size,
     )
 
 
@@ -252,6 +280,7 @@ def check_output_sizes(
     variable_count: int,
     constraint_size: int,
     structure: _cache.Structure,
+    state_size: int = 0,
 ) -> None:
     """Checks that each program writes as many values as Ipopt expects."""
     expected = {
@@ -260,6 +289,7 @@ def check_output_sizes(
             variable_count,
             constraint_size,
             structure.jacobian_rows.size,
+            *((state_size,) if state_size > 0 else ()),
         ),
         Program.HESSIAN: (structure.hessian_rows.size,),
     }
