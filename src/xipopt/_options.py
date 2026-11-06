@@ -55,10 +55,10 @@ class CompileOptions(NamedTuple):
     custom_calls: tuple[str, ...] | Literal["detect"] = ()
     """The custom call targets that the functions may call, or `"detect"` for all of them.
 
-    JAX refuses to serialize calls to targets that it has no compatibility promise for, which
-    includes the targets of third-party libraries such as `klujax`. Differentiating a function
-    can add targets that it does not call itself, for instance a transposed solve. `"detect"`
-    reads the targets from the lowered programs and allows every one of them.
+    JAX refuses to serialize calls to targets that it has no compatibility promise for,
+    which includes the targets of third-party libraries such as `klujax`. Differentiating a
+    function can add targets that it does not call itself, for instance a transposed solve.
+    `"detect"` reads the targets from the lowered programs and allows every one of them.
     """
     host_callbacks: bool = False
     """Whether the functions may call back into Python, for instance through `jax.debug.callback`.
@@ -67,13 +67,13 @@ class CompileOptions(NamedTuple):
     is slower for every callback it makes. A problem with this option cannot be saved, since
     its programs refer to callbacks of this process, and it does not use the disk cache. The
     option replaces `custom_calls`, because such programs are not checked by `jax.export`.
-    `EQX_ON_ERROR=nan` removes the callbacks of Equinox and keeps the solve free of Python.
+    `EQX_ON_ERROR=nan` removes the callbacks of Equinox, so the solve never enters Python.
     """
     debug_info: bool = True
     """Whether the programs keep the source locations of their operations.
 
     Without them a saved problem is smaller and loads faster, but profiles and compiler
-    messages no longer point at lines of the functions.
+    messages do not point at lines of the functions.
     """
 
 

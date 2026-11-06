@@ -24,12 +24,12 @@ versions of JAX export.
 
 xipopt itself is under the Hippocratic License 3.0. The wheels also contain Ipopt
 (Eclipse Public License 2.0), MUMPS (CeCILL-C), SPRAL, METIS, OpenBLAS and a few smaller
-libraries, each under its own license. Every wheel carries a copy of them in its
+libraries, each under its own license. Every wheel contains a copy of them in its
 metadata, and the [licenses
 directory](https://github.com/nardi/xipopt/tree/main/licenses) of the repository lists
 them.
 
-## Building from source
+## Source builds
 
 The extension module links the Ipopt library of the
 [Ipopt_jll](https://github.com/JuliaBinaryWrappers/Ipopt_jll.jl) package that Julia
@@ -52,4 +52,4 @@ The [development page](development.md) describes the checks that the repository 
 | --- | --- |
 | `CYXLA_PJRT_PLUGIN` | Path of a PJRT plugin that replaces the installed one |
 | `CYXLA_CACHE_DIR` | Directory of the disk cache, `~/.cache/cyxla` if unset |
-| `OMP_CANCELLATION` | Set to `TRUE` by xipopt unless the environment says otherwise, since SPRAL needs it |
+| `OMP_CANCELLATION` | Set to `TRUE` by xipopt unless the environment sets another value, since SPRAL needs it |

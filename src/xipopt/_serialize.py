@@ -1,7 +1,7 @@
 """Saving a compiled problem to a file and loading it in another process.
 
-The file holds the compiled programs, the sparsity structure, the bounds and the options. It
-does not hold the functions of the problem or the trees of its variables and parameters. The
+The file contains the compiled programs, the sparsity structure and the options. It does
+not contain the functions of the problem or the trees of its variables and parameters. The
 caller gives the trees when loading, which makes a loaded problem work exactly like a
 compiled one, and the file only keeps the path and shape of each leaf to check them against.
 """
@@ -20,22 +20,26 @@ import numpy as np
 from jaxtyping import Float, PyTree
 
 from xipopt import _cache
+from xipopt._bounds import bounds_vectors, start_point
 from xipopt._compile import CompiledProblem, check_output_sizes, make_native
 from xipopt._layout import (
-    INFINITY,
     ParamsLayout,
-    VariableLayout,
+    layout_for,
     params_layout,
-    variable_layout_for,
 )
 from xipopt._options import CompileOptions
+from xipopt._problem_types import BoundsTree, is_variable
 from xipopt._types import Program, Sense
 
 KIND = "xipopt.problem"
-"""The kind of bundle that holds a compiled problem."""
+"""The kind of bundle that contains a compiled problem."""
 
-VERSION = 1
-"""The version of the payload, which changes when the data in the file changes."""
+VERSION = 2
+"""The version of the payload, which changes when the data in the file changes.
+
+The payload holds the first-order program, the Hessian program, the sparsity structure and
+the paths and shapes of the trees. It holds no bounds.
+"""
 
 
 def dumps(compiled: CompiledProblem) -> bytes:
@@ -59,6 +63,8 @@ def loads(
     variables: PyTree[Any],
     params: PyTree[Any] = None,
     *,
+    constraints: PyTree[Any] = None,
+    variable_bounds: BoundsTree | None = None,
     on_mismatch: Literal["recompile", "raise"] = "recompile",
     warm_up: bool = True,
     import_providers: bool = False,
@@ -68,15 +74,18 @@ def loads(
 
     `variables` and `params` are trees with the structure that the problem was compiled for.
     The leaves of `variables` are `Variable`s or arrays, and those of `params` are arrays or
-    `jax.ShapeDtypeStruct`s, as for `compile`. Only their paths and shapes are checked
-    against the file, and the bounds come from the file. The result solves like a compiled
-    problem, with the structure of `variables` for `x`, except that its `problem` is `None`.
+    `jax.ShapeDtypeStruct`s, as for `compile`. A problem with constraints also needs
+    `constraints`, a tree with the structure and shapes of `Evaluation.constraints`. Only the
+    paths and shapes of the trees are checked against the file. The file holds no bounds, so
+    they go to `solve`. The result solves like a compiled problem, with the structure of
+    `variables` for `x`, except that its `problem` is `None`.
 
     Executables that were stored for another machine are replaced by a compilation of the
-    StableHLO, unless `on_mismatch` is `raise`. With `warm_up` each program runs once, so the
-    first solve is as fast as the later ones. The warm-up runs on the midpoint of the bounds of
-    the variables and on the given `params`, or on zeros for parameters that are only shapes.
-    A program that fails there raises a warning and the problem loads anyway.
+    StableHLO, unless `on_mismatch` is `raise`. With `warm_up` each program runs once, so
+    the first solve is as fast as the later ones. The warm-up runs on the point nearest to
+    the origin inside `variable_bounds` and on the given `params`, or on zeros for
+    parameters that are only shapes. Without `variable_bounds` the point is zero. A program
+    that fails there raises a warning and the problem loads anyway.
 
     A program that calls a library such as `klujax` needs that library imported before
     loading, since its handlers live in the library. Loading raises a `MissingTargetError`
@@ -84,13 +93,15 @@ def loads(
     imports those libraries itself, which runs their code, so only use it for files you
     trust.
 
-    The programs of the file load on `workers` threads, which by default is one per program up
-    to the number of processors. Pass 1 to load them one after another.
+    The programs of the file load on `workers` threads, which by default is one per program
+    up to the number of processors. Pass 1 to load them one after another.
     """
     return read(
         cyxla.Bundle(data, KIND, VERSION),
         variables,
         params,
+        constraints,
+        variable_bounds,
         on_mismatch,
         warm_up,
         import_providers,
@@ -103,6 +114,8 @@ def load(
     variables: PyTree[Any],
     params: PyTree[Any] = None,
     *,
+    constraints: PyTree[Any] = None,
+    variable_bounds: BoundsTree | None = None,
     on_mismatch: Literal["recompile", "raise"] = "recompile",
     warm_up: bool = True,
     import_providers: bool = False,
@@ -113,6 +126,8 @@ def load(
         cyxla.Bundle.read(path, KIND, VERSION),
         variables,
         params,
+        constraints,
+        variable_bounds,
         on_mismatch,
         warm_up,
         import_providers,
@@ -131,14 +146,6 @@ def pack(compiled: CompiledProblem) -> tuple[cyxla.BundleWriter, dict[str, Any]]
             "programs refer to Python callbacks of this process."
         )
     writer = cyxla.BundleWriter(KIND, VERSION)
-    arrays = {
-        "variable_lower": compiled.variables.lower,
-        "variable_upper": compiled.variables.upper,
-        "constraint_lower": compiled.constraint_lower,
-        "constraint_upper": compiled.constraint_upper,
-    }
-    for name, values in arrays.items():
-        writer.add(name, np.ascontiguousarray(values, np.float64))
     for name in _cache.Structure._fields:
         writer.add(
             name, np.ascontiguousarray(getattr(compiled.structure, name), np.intc)
@@ -156,8 +163,8 @@ def pack(compiled: CompiledProblem) -> tuple[cyxla.BundleWriter, dict[str, Any]]
         "cyxla": cyxla.__version__,
         "options": cyxla.encode_record(compiled.options),
         "sense": int(compiled.sense),
-        "constraint_shapes": [list(shape) for shape in compiled.constraint_shapes],
         "variables": cyxla.encode_fingerprint(compiled.variables.fingerprint),
+        "constraints": cyxla.encode_fingerprint(compiled.constraints.fingerprint),
         "params": cyxla.encode_fingerprint(compiled.params.fingerprint),
         "programs": records,
     }
@@ -168,6 +175,8 @@ def read(
     bundle: cyxla.Bundle,
     variables: PyTree[Any],
     params: PyTree[Any],
+    constraints: PyTree[Any],
+    variable_bounds: BoundsTree | None,
     on_mismatch: Literal["recompile", "raise"],
     warm_up: bool,
     import_providers: bool,
@@ -182,12 +191,23 @@ def read(
     cyxla.initialize(platform="cpu", jax_targets=bool(needed))
     cyxla.check_targets(present, import_providers)
 
-    variable_layout = variable_layout_for(
-        variables,
-        bundle.array("variable_lower", np.float64).copy(),
-        bundle.array("variable_upper", np.float64).copy(),
-        cyxla.decode_fingerprint(meta["variables"]),
+    variable_layout = layout_for(
+        variables, cyxla.decode_fingerprint(meta["variables"]), "variables", is_variable
     )
+    expected_constraints = cyxla.decode_fingerprint(meta["constraints"])
+    if constraints is None and expected_constraints:
+        raise ValueError(
+            "The problem in the file has constraints, so `constraints` is required."
+        )
+    constraint_layout = layout_for(
+        () if constraints is None else constraints,
+        expected_constraints,
+        "constraints",
+    )
+    lower, upper = bounds_vectors(
+        variable_bounds, variable_layout, "variable_bounds", "variables"
+    )
+    point = start_point(lower, upper)
     layout = params_layout(params)
     cyxla.check_fingerprint(
         cyxla.decode_fingerprint(meta["params"]), layout.fingerprint, "parameters"
@@ -205,15 +225,13 @@ def read(
             continue
         executable, program_statistics = loaded
         if warm_up:
-            warm_up_program(program, executable, variable_layout, layout, params)
+            warm_up_program(program, executable, point, layout, params)
         statistics = statistics.add(program_statistics)
         executables.append(executable)
 
     options = cyxla.decode_record(CompileOptions, meta["options"])
-    constraint_lower = bundle.array("constraint_lower", np.float64).copy()
-    constraint_upper = bundle.array("constraint_upper", np.float64).copy()
     check_output_sizes(
-        executables, variable_layout.size, constraint_lower.size, structure
+        executables, variable_layout.size, constraint_layout.size, structure
     )
     return CompiledProblem(
         problem=None,
@@ -221,15 +239,12 @@ def read(
         sense=Sense(meta["sense"]),
         variables=variable_layout,
         params=layout,
-        constraint_shapes=tuple(tuple(shape) for shape in meta["constraint_shapes"]),
-        constraint_lower=constraint_lower,
-        constraint_upper=constraint_upper,
+        constraints=constraint_layout,
         native=make_native(
             executables,
             variable_layout,
             layout,
-            constraint_lower,
-            constraint_upper,
+            constraint_layout,
             structure,
             options,
         ),
@@ -246,10 +261,10 @@ def load_programs(
 ) -> list[tuple[cyxla.Executable, cyxla.CompileStatistics] | None]:
     """Loads the executables of the records, on several threads when there is more than one.
 
-    Deserializing an executable releases the GIL and takes most of the time of a load, so the
-    programs overlap. A record that is `None` stays `None`. The first failure is raised once
-    every thread has finished. `workers` is the number of threads, which by default is one per
-    program up to the number of processors, and 1 loads them one after another.
+    Deserializing an executable releases the GIL and takes most of the time of a load, so
+    the programs overlap. A record that is `None` stays `None`. The first failure is raised
+    once every thread has finished. `workers` is the number of threads, which by default is
+    one per program up to the number of processors, and 1 loads them one after another.
     """
     present = [record for record in records if record is not None]
     count = min(len(present), os.cpu_count() or 1) if workers is None else workers
@@ -269,23 +284,6 @@ def load_programs(
     return [None if record is None else next(iterator) for record in records]
 
 
-def warm_up_point(variables: VariableLayout) -> Float[np.ndarray, " n"]:
-    """Returns a point inside the bounds of the variables, in the middle where it can be.
-
-    A variable with two finite bounds gets their midpoint, one with a single finite bound
-    gets that bound, and a free one gets zero.
-    """
-    lower_finite = variables.lower > -INFINITY
-    upper_finite = variables.upper < INFINITY
-    return np.where(
-        lower_finite & upper_finite,
-        0.5 * (variables.lower + variables.upper),
-        np.where(
-            lower_finite, variables.lower, np.where(upper_finite, variables.upper, 0.0)
-        ),
-    )
-
-
 def warm_up_parameters(
     layout: ParamsLayout, params: PyTree[Any]
 ) -> Float[np.ndarray, " p"]:
@@ -298,7 +296,7 @@ def warm_up_parameters(
 def warm_up_program(
     program: Program,
     executable: cyxla.Executable,
-    variables: VariableLayout,
+    point: Float[np.ndarray, " n"],
     layout: ParamsLayout,
     params: PyTree[Any],
 ) -> None:
@@ -306,12 +304,12 @@ def warm_up_program(
 
     Zeros are a bad input for a program that factorizes a matrix, which fails on a singular
     one. A failure here says nothing about whether the program works elsewhere, since the
-    run only loads code, so it raises a warning and loading goes on.
+    run only loads code, so it raises a warning and loading continues.
     """
     expected = executable.input_types
     assert expected is not None
     values: Sequence[np.ndarray] = [
-        warm_up_point(variables),
+        point,
         warm_up_parameters(layout, params),
         np.ones(()),
         np.zeros(expected[-1].shape),

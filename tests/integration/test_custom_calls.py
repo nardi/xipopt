@@ -22,10 +22,10 @@ PROVIDERS = TESTS_DIRECTORY / "providers"
 """The directory with the stand-in for a library with FFI handlers."""
 
 OPTIMUM = 4.5
-"""The objective of `problem` at its minimum, which lies at `[0.5, 0]`."""
+"""The objective of `problem` at its minimum, which is at `[0.5, 0]`."""
 
 DENSE = xip.CompileOptions(derivatives=xip.Derivatives.DENSE)
-"""Dense derivatives, since the sparsity detection does not know calls to FFI targets."""
+"""Dense derivatives, since `asdex` cannot trace calls to FFI targets."""
 
 
 @pytest.fixture(scope="module")
@@ -47,7 +47,10 @@ def problem(provider: ModuleType) -> xip.Problem:
         )
         return jnp.sum(provider.cholesky(matrix) ** 2) + (x[0] - 1.0) ** 2
 
-    return xip.Problem(variables=xip.Variable(shape=(2,)), objective=objective)
+    return xip.Problem(
+        variables=xip.Variable(shape=(2,)),
+        objective=objective,
+    )
 
 
 def test_custom_calls_have_to_be_allowed(provider: ModuleType) -> None:
@@ -115,7 +118,7 @@ def test_loading_needs_the_library(provider: ModuleType, tmp_path: Path) -> None
         in result.stderr
     )
 
-    # The library comes with the process this time, so loading finds its handler.
+    # This run imports the library through `import_providers`, so the handler is registered.
     script_with_import = run_loader(
         path, tmp_path, ", import_providers=True", PROVIDERS
     )

@@ -37,14 +37,19 @@ def objective(x, params):
 
 
 problem = xip.Problem(
-    variables=xip.Variable(lower=1.0, upper=5.0, shape=(4,)),
+    variables=xip.Variable(shape=(4,)),
     objective=objective,
     constraints=(
-        xip.Constraint(lambda x, params: jnp.prod(x), lower=25.0),
-        xip.Constraint(lambda x, params: jnp.sum(x**2), lower=40.0, upper=40.0),
+        lambda x, params: jnp.prod(x),
+        lambda x, params: jnp.sum(x**2),
     ),
 )
-solution = xip.solve(problem, jnp.array([1.0, 5.0, 5.0, 1.0]))
+solution = xip.solve(
+    problem,
+    jnp.array([1.0, 5.0, 5.0, 1.0]),
+    variable_bounds=xip.Bounds(1.0, 5.0),
+    constraint_bounds=xip.Bounds(lower=(25.0, 40.0), upper=(jnp.inf, 40.0)),
+)
 print(solution.status, solution.objective, solution.x)
 ```
 

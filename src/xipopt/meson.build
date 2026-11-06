@@ -1,5 +1,6 @@
 python.install_sources(
   '__init__.py',
+  '_bounds.py',
   '_cache.py',
   '_compile.py',
   '_layout.py',
@@ -17,7 +18,7 @@ python.install_sources(
 )
 
 cython_args = ['-3', '--fast-fail']
-# MSVC knows none of these options, so only the supported ones are passed.
+# MSVC accepts none of these flags, so only the supported ones are passed.
 c_args = meson.get_compiler('c').get_supported_arguments(
   '-Wno-unused-function', '-Wno-unused-variable', '-Wno-unused-but-set-variable',
 )
@@ -67,7 +68,7 @@ python.extension_module(
   '_solver',
   solver_c,
   dependencies: [ipopt, openblas, lbt, cyxla, python.dependency()],
-  # `_platform.h` sits next to the sources and is not installed, as only this module needs it.
+  # `_platform.h` is next to the sources and is not installed, as only this module needs it.
   include_directories: include_directories('.'),
   c_args: c_args,
   install: true,

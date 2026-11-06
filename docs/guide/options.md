@@ -14,11 +14,12 @@ import numpy as np
 import xipopt as xip
 
 problem = xip.Problem(
-    variables=xip.Variable(lower=-2.0, upper=2.0, shape=(2,)),
+    variables=xip.Variable(shape=(2,)),
     objective=lambda x, params: 100 * (x[1] - x[0] ** 2) ** 2 + (1 - x[0]) ** 2,
 )
 compiled = xip.compile(problem)
 start = np.array([-1.2, 1.0])
+variable_bounds = xip.Bounds(-2.0, 2.0)
 
 options = xip.SolveOptions(
     tolerance=1e-10,
@@ -26,7 +27,7 @@ options = xip.SolveOptions(
     time_limit=10.0,
     linear_solver=xip.LinearSolver.SPRAL,
 )
-solution = xip.solve(compiled, start, options=options)
+solution = xip.solve(compiled, start, options=options, variable_bounds=variable_bounds)
 print(solution.status.name, solution.iterations)
 ```
 
@@ -39,12 +40,12 @@ assert solution.status.succeeded
 - `max_iterations` and `time_limit` stop a solve. The time limit counts seconds of wall
   time, and an infinite limit means none.
 - `linear_solver` is `MUMPS` or `SPRAL`. The wheels contain these two. MUMPS is the
-  default. SPRAL runs in parallel with OpenMP, so it can pay off for large problems.
+  default. SPRAL runs in parallel with OpenMP, so it can be faster for large problems.
 - `print_level` is Ipopt's, from 0 to 12. Ipopt prints through the C library, so the
   output does not go through Python's `sys.stdout`. The default 0 prints nothing.
 - `blas_threads` sets the threads of OpenBLAS, one by default. The linear algebra calls
   of a sparse factorization are small, and a single thread avoids the cost of
-  coordinating many. Pass `None` to leave the setting alone.
+  coordinating many. Pass `None` to skip setting the thread count.
 
 Any other option of Ipopt goes in `settings`, as a name and a value of type `str`, `int`
 or `float`. Ipopt's [option list](https://coin-or.github.io/Ipopt/OPTIONS.html) has them
@@ -58,7 +59,7 @@ options = xip.SolveOptions(
         xip.IpoptSetting("acceptable_tol", 1e-6),
     )
 )
-solution = xip.solve(compiled, start, options=options)
+solution = xip.solve(compiled, start, options=options, variable_bounds=variable_bounds)
 ```
 
 <!-- name: test_docs_options -->
@@ -89,7 +90,10 @@ def watch(info):
 
 
 solution = xip.solve(
-    compiled, start, options=xip.SolveOptions(callback=watch, tolerance=1e-12)
+    compiled,
+    start,
+    options=xip.SolveOptions(callback=watch, tolerance=1e-12),
+    variable_bounds=variable_bounds,
 )
 ```
 
@@ -104,12 +108,16 @@ Without a callback Ipopt only counts the iterations.
 
 ## Statistics
 
-A [`Solution`][xipopt.Solution] counts the callbacks that Ipopt made. `statistics` has
-the number of calls and the seconds spent in the program for each of the five callbacks.
+A [`Solution`][xipopt.Solution] counts the callbacks that Ipopt made and the executions
+of the programs. `statistics` has, for each of the five callbacks, the number of calls
+and how many of them were answered from an earlier execution at the same point. It also
+has the executions and the seconds of the first-order program and of the Hessian
+program, and the number of points at which derivatives were computed and never asked
+for.
 
 <!-- name: test_docs_options -->
 ```python
-solution = xip.solve(compiled, start)
+solution = xip.solve(compiled, start, variable_bounds=variable_bounds)
 print(solution.statistics.gradient, solution.statistics.hessian)
 ```
 
@@ -121,6 +129,6 @@ assert solution.statistics.objective.calls >= solution.iterations
 ## Threads
 
 A solve holds a lock for the length of the run, because the runtime of cyxla and the
-buffers that Ipopt's callbacks share are not thread safe. Solves from several threads
+buffers that Ipopt's callbacks share are not thread-safe. Solves from several threads
 therefore run one after another. A solve releases the GIL while Ipopt works, so other
 Python threads keep running.

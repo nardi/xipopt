@@ -8,13 +8,12 @@ import cyxla
 import jax
 import numpy as np
 from cyxla import Executable, LoweredProgram
-from jaxtyping import Float, PyTree
+from jaxtyping import PyTree
 
 from xipopt import _cache, _programs
 from xipopt._layout import (
-    INFINITY,
     ParamsLayout,
-    VariableLayout,
+    TreeLayout,
     params_layout,
     variable_layout,
 )
@@ -32,12 +31,10 @@ class CompiledProblem(NamedTuple):
     """The problem that was compiled, or `None` for one that `load` returned."""
     options: CompileOptions
     sense: Sense
-    variables: VariableLayout
+    variables: TreeLayout
     params: ParamsLayout
-    constraint_shapes: tuple[tuple[int, ...], ...]
-    """The shape of the output of each constraint."""
-    constraint_lower: Float[np.ndarray, " m"]
-    constraint_upper: Float[np.ndarray, " m"]
+    constraints: TreeLayout
+    """The structure and the shapes of the constraints that `Problem.evaluate` returns."""
     native: NativeProblem
     """The compiled programs with the buffers that Ipopt's callbacks share."""
     structure: _cache.Structure
@@ -97,10 +94,7 @@ def build(
         else None
     )
     key = _cache.problem_key(
-        _cache.jaxpr_digest(functions.objective, arguments.first_order),
-        b""
-        if functions.constraints is None
-        else _cache.jaxpr_digest(functions.constraints, arguments.first_order),
+        _cache.jaxpr_digest(functions.evaluate, arguments.first_order),
         options,
         int(problem.sense),
         jacobian_given,
@@ -137,9 +131,8 @@ def build(
         )
     executables, compile_statistics = compile_programs(lowered, disk_cache)
     check_output_sizes(executables, n, constraint_size, structure)
-    lower_bound, upper_bound = constraint_bounds(problem, functions.constraint_shapes)
     native = make_native(
-        executables, variables, layout, lower_bound, upper_bound, structure, options
+        executables, variables, layout, functions.constraints, structure, options
     )
     return CompiledProblem(
         problem=problem,
@@ -147,9 +140,7 @@ def build(
         sense=problem.sense,
         variables=variables,
         params=layout,
-        constraint_shapes=functions.constraint_shapes,
-        constraint_lower=lower_bound,
-        constraint_upper=upper_bound,
+        constraints=functions.constraints,
         native=native,
         structure=structure,
         statistics=_cache.combine(
@@ -164,20 +155,17 @@ def build(
 
 def make_native(
     executables: Sequence[Executable | None],
-    variables: VariableLayout,
+    variables: TreeLayout,
     layout: ParamsLayout,
-    constraint_lower: Float[np.ndarray, " m"],
-    constraint_upper: Float[np.ndarray, " m"],
+    constraints: TreeLayout,
     structure: _cache.Structure,
     options: CompileOptions,
 ) -> NativeProblem:
-    """Returns the native problem for compiled programs, bounds and a sparsity structure."""
+    """Returns the native problem for compiled programs and a sparsity structure."""
     return NativeProblem(
         executables,
-        variables.lower,
-        variables.upper,
-        constraint_lower,
-        constraint_upper,
+        variables.size,
+        constraints.size,
         layout.size,
         structure.jacobian_rows,
         structure.jacobian_columns,
@@ -190,11 +178,10 @@ def make_native(
 def structure_of(derivatives: _programs.DerivativeFunctions) -> _cache.Structure:
     """Returns the sparsity structure of the derivatives."""
     empty = np.zeros(0, dtype=np.intc)
-    jacobian = derivatives.jacobian
     hessian = derivatives.hessian
     return _cache.Structure(
-        empty if jacobian is None else jacobian.rows,
-        empty if jacobian is None else jacobian.columns,
+        derivatives.first_order.rows,
+        derivatives.first_order.columns,
         empty if hessian is None else hessian.rows,
         empty if hessian is None else hessian.columns,
     )
@@ -206,10 +193,10 @@ def lower_programs(
     arguments: _programs.ProgramArguments,
     options: CompileOptions,
 ) -> tuple[LoweredProgram | None, ...]:
-    """Lowers the five programs of a problem, in the order of `Program`.
+    """Lowers the two programs of a problem, in the order of `Program`.
 
-    A program with nothing to compute, such as the Jacobian of a problem without
-    constraints, is `None`.
+    A Hessian that is not compiled, for a limited-memory Hessian or one without entries, is
+    `None`.
     """
 
     def lower(function: _programs.FlatFunction | None, shapes: Any) -> Any:
@@ -234,16 +221,9 @@ def lower_programs(
                 "in `custom_calls`."
             ) from error
 
-    jacobian = derivatives.jacobian
     hessian = derivatives.hessian
     return (
-        lower(functions.objective, arguments.first_order),
-        lower(derivatives.gradient, arguments.first_order),
-        lower(functions.constraints, arguments.first_order),
-        lower(
-            None if jacobian is None or jacobian.rows.size == 0 else jacobian.function,
-            arguments.first_order,
-        ),
+        lower(derivatives.first_order.function, arguments.first_order),
         lower(
             None if hessian is None or hessian.rows.size == 0 else hessian.function,
             arguments.second_order,
@@ -275,40 +255,20 @@ def check_output_sizes(
 ) -> None:
     """Checks that each program writes as many values as Ipopt expects."""
     expected = {
-        Program.OBJECTIVE: 1,
-        Program.GRADIENT: variable_count,
-        Program.CONSTRAINTS: constraint_size,
-        Program.JACOBIAN: structure.jacobian_rows.size,
-        Program.HESSIAN: structure.hessian_rows.size,
+        Program.FIRST_ORDER: (
+            1,
+            variable_count,
+            constraint_size,
+            structure.jacobian_rows.size,
+        ),
+        Program.HESSIAN: (structure.hessian_rows.size,),
     }
     for program, executable in zip(Program, executables, strict=True):
         if executable is None:
             continue
-        if executable.output_bytes != (8 * expected[program],):
+        sizes = tuple(8 * size for size in expected[program])
+        if executable.output_bytes != sizes:
             raise RuntimeError(
                 f"The {program.name.lower()} program writes {executable.output_bytes} "
-                f"bytes, but {8 * expected[program]} are expected."
+                f"bytes, but {sizes} are expected."
             )
-
-
-def constraint_bounds(
-    problem: Problem, shapes: tuple[tuple[int, ...], ...]
-) -> tuple[Float[np.ndarray, " m"], Float[np.ndarray, " m"]]:
-    """Returns the lower and upper bounds of all constraints as flat vectors."""
-    lowers: list[np.ndarray] = []
-    uppers: list[np.ndarray] = []
-    for constraint, shape in zip(problem.constraints, shapes, strict=True):
-        try:
-            lower = np.broadcast_to(np.asarray(constraint.lower, np.float64), shape)
-            upper = np.broadcast_to(np.asarray(constraint.upper, np.float64), shape)
-        except ValueError as error:
-            raise ValueError(
-                f"The bounds of a constraint do not broadcast to its shape {shape}."
-            ) from error
-        if np.any(lower > upper):
-            raise ValueError("A constraint has a lower bound above its upper bound.")
-        lowers.append(np.clip(lower.ravel(), -INFINITY, INFINITY))
-        uppers.append(np.clip(upper.ravel(), -INFINITY, INFINITY))
-    if not lowers:
-        return np.zeros(0), np.zeros(0)
-    return np.concatenate(lowers), np.concatenate(uppers)

@@ -51,11 +51,10 @@ class Status(IntEnum):
 class Program(IntEnum):
     """The programs that Ipopt's callbacks execute, in the order the native layer indexes them."""
 
-    OBJECTIVE = 0
-    GRADIENT = 1
-    CONSTRAINTS = 2
-    JACOBIAN = 3
-    HESSIAN = 4
+    FIRST_ORDER = 0
+    """The objective, the gradient, the constraints and the Jacobian in one pass."""
+    HESSIAN = 1
+    """The Hessian of the Lagrangian."""
 
 
 class CallbackStatistics(NamedTuple):
@@ -63,18 +62,35 @@ class CallbackStatistics(NamedTuple):
 
     calls: int
     """Times Ipopt called the callback."""
+    cache_hits: int
+    """Calls that were answered from an execution that an earlier callback at the same point
+    had caused, so they ran no program."""
+
+
+class ProgramStatistics(NamedTuple):
+    """Counters of one program."""
+
+    executions: int
+    """Times the program ran."""
     seconds: float
-    """Seconds spent executing the program of the callback."""
+    """Seconds spent executing the program."""
 
 
 class SolveStatistics(NamedTuple):
-    """Counters of every callback of Ipopt for one solve."""
+    """Counters of every callback of Ipopt and of both programs for one solve."""
 
     objective: CallbackStatistics
     gradient: CallbackStatistics
     constraints: CallbackStatistics
     jacobian: CallbackStatistics
     hessian: CallbackStatistics
+    first_order_program: ProgramStatistics
+    """The program for the objective, the gradient, the constraints and the Jacobian, which
+    runs once for each new point at which one of those callbacks evaluates a value."""
+    hessian_program: ProgramStatistics
+    unused_derivatives: int
+    """Points at which the gradient and the Jacobian were computed with the values, and
+    Ipopt never asked for them. Ipopt evaluates trial points that it rejects."""
 
 
 class BuildStatistics(NamedTuple):
