@@ -89,6 +89,20 @@ class EvaluationFunction(Protocol):
     def __call__(self, x: Any, params: Any, /) -> Evaluation: ...
 
 
+class StatefulEvaluationFunction(Protocol):
+    """A JAX function `f(x, params, state)` that also reads and returns a state.
+
+    `state` has the structure of `StatefulProblem.state`. The function returns the
+    evaluation and the new state, with the same structure and shapes. The state never enters
+    a derivative, so it may only choose where an inner iteration starts and not what it
+    converges to.
+    """
+
+    def __call__(
+        self, x: Any, params: Any, state: Any, /
+    ) -> tuple[Evaluation, Any]: ...
+
+
 Pattern = Any
 """Where a derivative can be nonzero, given in one of four forms.
 
@@ -183,6 +197,30 @@ class Problem:
         object.__setattr__(self, "sense", sense)
         object.__setattr__(self, "jacobian_pattern", jacobian_pattern)
         object.__setattr__(self, "hessian_pattern", hessian_pattern)
+
+
+class StatefulProblem(NamedTuple):
+    """A `Problem` whose evaluation carries a state from one point to the next.
+
+    xipopt keeps the state between evaluations. Every successful evaluation of the objective
+    and constraints replaces it by the state that `evaluate` returned. A solve starts from
+    `state`, or from the state of the `Solution` that it warm starts from. Results then
+    depend on the order of evaluations, so use the state only for the starting guess of an
+    inner solve that converges to its tolerance, such as a Newton iteration. A `Problem` has
+    no state and evaluates every point the same way.
+    """
+
+    variables: PyTree[Variable]
+    """A pytree with a `Variable` at every leaf, which fixes the structure of `x`."""
+    evaluate: StatefulEvaluationFunction
+    """The function that returns the evaluation and the new state."""
+    state: PyTree[ArrayLike]
+    """The initial state, a nonempty pytree of floating point arrays."""
+    sense: Sense = Sense.MINIMIZE
+    jacobian_pattern: Pattern | None = None
+    """Where the Jacobian of the constraints is nonzero, or `None` to detect it."""
+    hessian_pattern: Pattern | None = None
+    """Where the Hessian of the Lagrangian is nonzero, or `None` to detect it."""
 
 
 def evaluation_from_functions(

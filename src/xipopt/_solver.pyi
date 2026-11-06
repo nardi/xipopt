@@ -35,6 +35,7 @@ class NativeResult(NamedTuple):
     executions: tuple[int, ...]
     seconds: tuple[float, ...]
     unused_derivatives: int
+    state: Float[np.ndarray, " s"]
 
 class Multipliers(NamedTuple):
     constraints: Float[np.ndarray, " m"]
@@ -60,6 +61,7 @@ class NativeProblem:
         hessian_rows: Int[np.ndarray, " nnz"],
         hessian_columns: Int[np.ndarray, " nnz"],
         zero_copy: bool = True,
+        state_size: int = 0,
     ) -> None: ...
     def solve(
         self,
@@ -72,4 +74,5 @@ class NativeProblem:
         settings: Sequence[tuple[str, IpoptValue]] = (),
         warm_start: Multipliers | None = None,
         observer: Callable[[IterationState], bool] | None = None,
+        initial_state: Float[np.ndarray, " s"] | None = None,
     ) -> NativeResult: ...

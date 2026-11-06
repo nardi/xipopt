@@ -12,6 +12,7 @@ nav = [
   { "Guide" = [
     { "Basic usage" = "guide/basic.md" },
     { "Parameters and warm starts" = "guide/parameters.md" },
+    { "Problem state" = "guide/problem-state.md" },
     { "Derivatives and sparsity" = "guide/derivatives.md" },
     { "Options and callbacks" = "guide/options.md" },
     { "Saved problems" = "guide/saving.md" },

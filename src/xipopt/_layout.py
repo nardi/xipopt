@@ -78,6 +78,22 @@ class ParamsLayout(NamedTuple):
         """Length of the flat vector, which holds at least one entry so buffers are never empty."""
         return max(sum(math.prod(aval.shape) for aval in self.avals), 1)
 
+    @property
+    def element_count(self) -> int:
+        """Number of elements in all leaves, which is zero for an empty tree."""
+        return sum(math.prod(aval.shape) for aval in self.avals)
+
+    def unflatten(self, values: Float[np.ndarray, " p"]) -> PyTree[np.ndarray]:
+        """Returns a flat vector as arrays in the structure and types of the leaves."""
+        leaves = []
+        offset = 0
+        for aval in self.avals:
+            size = math.prod(aval.shape)
+            leaf = np.array(values[offset : offset + size]).reshape(aval.shape)
+            leaves.append(leaf.astype(aval.dtype))
+            offset += size
+        return jax.tree.unflatten(self.structure, leaves)
+
     def flatten(self, params: PyTree[Any]) -> Float[np.ndarray, " p"]:
         """Returns the parameters as a flat float64 vector, checking them against the layout."""
         leaves, structure = jax.tree.flatten(params)
@@ -123,6 +139,19 @@ def params_layout(params: PyTree[Any]) -> ParamsLayout:
     avals = tuple(as_aval(leaf) for leaf in leaves)
     fingerprint = cyxla.tree_fingerprint(params, lambda leaf: as_aval(leaf).shape)
     return ParamsLayout(structure, avals, fingerprint)
+
+
+def state_layout(state: PyTree[Any]) -> ParamsLayout:
+    """Returns the layout of the state of a `StatefulProblem`, which has floating point leaves."""
+    layout = params_layout(state)
+    if layout.element_count == 0:
+        raise ValueError("The state of a StatefulProblem needs at least one element.")
+    for aval in layout.avals:
+        if not jnp.issubdtype(aval.dtype, jnp.floating):
+            raise TypeError(
+                f"The leaves of the state must be floating point arrays, not {aval.dtype}."
+            )
+    return layout
 
 
 def leaf_shape(leaf: Any) -> tuple[int, ...]:

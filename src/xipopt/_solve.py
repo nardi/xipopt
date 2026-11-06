@@ -11,7 +11,7 @@ from jaxtyping import PyTree
 from xipopt._bounds import bounds_vectors, start_point
 from xipopt._compile import CompiledProblem, compile  # noqa: A004
 from xipopt._options import CompileOptions, Hessian, SolveOptions
-from xipopt._problem_types import BoundsTree, Problem
+from xipopt._problem_types import BoundsTree, Problem, StatefulProblem
 from xipopt._solver import (
     IpoptValue,
     IterationState,
@@ -57,10 +57,15 @@ class Solution(NamedTuple):
     """Counters of the callbacks that Ipopt made during the solve."""
     build: BuildStatistics
     """Time and counts of compiling the problem, zero if it was compiled before."""
+    state: PyTree[np.ndarray] = None
+    """The state of a `StatefulProblem` after the last evaluation, or `None` without state.
+
+    Passing the solution as `warm_start` continues from this state.
+    """
 
 
 def solve(
-    problem: CompiledProblem | Problem,
+    problem: CompiledProblem | Problem | StatefulProblem,
     x0: PyTree[Any] = None,
     params: PyTree[Any] = None,
     options: SolveOptions = SolveOptions(),
@@ -74,15 +79,17 @@ def solve(
 
     A `Problem` is compiled first with `compile_options`, while a `CompiledProblem` ignores
     them. `variable_bounds` and `constraint_bounds` are a `Bounds`, or a pytree with the
-    structure of the variables or of the constraints and a `Bounds` at every leaf. Without `variable_bounds` the variables are
-    unbounded, and a problem with constraints needs `constraint_bounds`. The bounds are read
-    when the solve starts, so one compiled problem can be solved for many sets of bounds.
-    Without `x0` the start is the point nearest to the origin inside the bounds. A previous
-    `Solution` as `warm_start` supplies the multipliers that Ipopt starts from, and `x0`
-    should then be its `x`.
+    structure of the variables or of the constraints and a `Bounds` at every leaf. Without
+    `variable_bounds` the variables are unbounded, and a problem with constraints needs
+    `constraint_bounds`. The bounds are read when the solve starts, so one compiled problem
+    can be solved for many sets of bounds. Without `x0` the start is the point nearest to
+    the origin inside the bounds. A previous `Solution` as `warm_start` supplies the
+    multipliers that Ipopt starts from, and `x0` should then be its `x`. A problem with
+    state starts from the state of the `warm_start` when it has one, and from the initial
+    state of the problem otherwise.
     """
     build = BuildStatistics()
-    if isinstance(problem, Problem):
+    if isinstance(problem, Problem | StatefulProblem):
         problem = compile(problem, params, compile_options)
         build = problem.statistics
     variables = problem.variables
@@ -142,6 +149,7 @@ def solve(
         ipopt_settings(problem, options, warm_start is not None),
         multipliers,
         observer,
+        starting_state(problem, warm_start),
     )
     seconds = time.perf_counter() - begin
     status = Status(result.status)
@@ -152,6 +160,18 @@ def solve(
             f"{errors.last_message}"
         )
     return unpack(problem, result, status, sign, seconds, build)
+
+
+def starting_state(
+    problem: CompiledProblem, warm_start: Solution | None
+) -> np.ndarray | None:
+    """Returns the flat state that a solve starts from, or `None` for a problem without state."""
+    layout = problem.state
+    if layout is None:
+        return None
+    if warm_start is not None and warm_start.state is not None:
+        return layout.flatten(warm_start.state)
+    return problem.initial_state
 
 
 def ipopt_settings(
@@ -231,4 +251,5 @@ def unpack(
         solving_seconds=seconds,
         statistics=solve_statistics(result),
         build=build,
+        state=None if problem.state is None else problem.state.unflatten(result.state),
     )

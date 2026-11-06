@@ -1,10 +1,12 @@
 """The two functions that Ipopt's callbacks evaluate, as flat JAX functions.
 
-Every function takes the flat vector of variables `x` and the flat vector of parameters `p`.
-The first-order function returns the objective, its gradient, the constraint values and the
-values of the Jacobian in one pass, and the Hessian of the Lagrangian also takes the factor of
-the objective and the multipliers of the constraints. Derivatives are evaluated only at the
-entries of a sparsity pattern, in the order of the rows and columns that come with them.
+Every function takes the flat vector of variables `x` and the flat vector `p`, which
+contains the parameters followed by the state of a `StatefulProblem`, if there is one. The
+first-order function returns the objective, its gradient, the constraint values and the
+values of the Jacobian in one pass, and for a problem with state also the new state. The
+Hessian of the Lagrangian also takes the factor of the objective and the multipliers of the
+constraints. Derivatives are evaluated only at the entries of a sparsity pattern, in the
+order of the rows and columns that come with them.
 """
 
 import importlib.util
@@ -26,7 +28,7 @@ from xipopt._patterns import (
     lower_triangle,
     symmetric_entries,
 )
-from xipopt._problem_types import Evaluation, Problem
+from xipopt._problem_types import Evaluation, Problem, StatefulProblem
 from xipopt._types import Sense
 
 FlatFunction = Callable[..., Any]
@@ -44,12 +46,21 @@ class FlatFunctions(NamedTuple):
     """The functions of a problem on flat vectors."""
 
     evaluate: FlatFunction
-    """Returns the objective, negated for a problem that maximizes, followed by all constraint
-    values: one vector of length `1 + m`."""
+    """Returns `(values, new_state)` for `(x, p)`. `values` is the objective, negated for a
+    problem that maximizes, followed by all constraint values: one vector of length `1 + m`.
+    `new_state` is the flat state after the evaluation, or an empty vector for a problem
+    without state. For a stateful problem `p` ends with the flat state that goes in."""
+    values: FlatFunction
+    """Returns only `values` of `evaluate`, which is all that sparsity detection and the
+    Hessian need."""
     constraints: TreeLayout
     """The structure and the shapes of the arrays in `Evaluation.constraints`."""
     lagrangian: FlatFunction
     """Returns `factor * objective + multipliers @ constraints` for `(x, p, factor, multipliers)`."""
+    parameter_size: int
+    """The length of `p`, which is the parameters followed by the state."""
+    state_size: int = 0
+    """The length of the flat state, zero for a problem without state."""
 
     @property
     def constraint_size(self) -> int:
@@ -70,8 +81,9 @@ class DerivativeFunctions(NamedTuple):
     """The programs that the callbacks of Ipopt run."""
 
     first_order: Derivative
-    """Returns `(objective, gradient, constraints, jacobian_values)` for `(x, p)`. The rows
-    and columns are those of the Jacobian entries, with the rows counted over the constraints."""
+    """Returns `(objective, gradient, constraints, jacobian_values)` for `(x, p)`, followed by
+    the new state for a problem with state. The rows and columns are those of the Jacobian
+    entries, with the rows counted over the constraints."""
     hessian: Derivative | None
 
 
@@ -81,57 +93,96 @@ def asdex_installed() -> bool:
 
 
 def flat_functions(
-    problem: Problem,
+    problem: Problem | StatefulProblem,
     variables: TreeLayout,
     params: ParamsLayout,
+    state: ParamsLayout | None = None,
 ) -> FlatFunctions:
-    """Returns the functions of a problem on flat vectors."""
-    sign = 1.0 if problem.sense is Sense.MINIMIZE else -1.0
-    x_aval = jax.ShapeDtypeStruct((variables.size,), jnp.float64)
-    p_aval = jax.ShapeDtypeStruct((params.size,), jnp.float64)
+    """Returns the functions of a problem on flat vectors.
 
-    def evaluation_at(x: Any, p: Any) -> Evaluation:
-        result = problem.evaluate(
-            variables.unflatten_traced(x), params.unflatten_traced(p)
-        )
+    The state of a stateful problem is appended to the flat parameters `p`. Derivatives are
+    taken with respect to `x` only, so the state is a constant for them, and the new state
+    leaves the derivative as an auxiliary value.
+    """
+    sign = 1.0 if problem.sense is Sense.MINIMIZE else -1.0
+    state_size = 0 if state is None else state.size
+    parameter_size = params.size + state_size
+    x_aval = jax.ShapeDtypeStruct((variables.size,), jnp.float64)
+    p_aval = jax.ShapeDtypeStruct((parameter_size,), jnp.float64)
+
+    def evaluation_at(x: Any, p: Any) -> tuple[Evaluation, Any]:
+        x_tree = variables.unflatten_traced(x)
+        params_tree = params.unflatten_traced(p)
+        if state is None:
+            assert isinstance(problem, Problem)
+            result, new_state = problem.evaluate(x_tree, params_tree), None
+        else:
+            assert isinstance(problem, StatefulProblem)
+            result, new_state = problem.evaluate(
+                x_tree, params_tree, state.unflatten_traced(p[params.size :])
+            )
         if not isinstance(result, Evaluation):
             raise TypeError(
-                "`Problem.evaluate` must return an Evaluation, not "
-                f"{type(result).__name__}."
+                f"`evaluate` must return an Evaluation, not {type(result).__name__}."
             )
-        return result
+        return result, new_state
 
-    structure = jax.eval_shape(evaluation_at, x_aval, p_aval)
+    structure, state_structure = jax.eval_shape(evaluation_at, x_aval, p_aval)
     if structure.objective.shape != ():
         raise ValueError(
             f"The objective must be a scalar, not shape {structure.objective.shape}."
         )
     constraints = tree_layout(structure.constraints)
+    if state is not None:
+        returned = jax.tree.flatten(state_structure)
+        if returned[1] != state.structure or any(
+            leaf.shape != aval.shape
+            for leaf, aval in zip(returned[0], state.avals, strict=True)
+        ):
+            raise ValueError(
+                "`StatefulProblem.evaluate` must return a state with the structure and "
+                "shapes of `StatefulProblem.state`."
+            )
     count = constraints.size
 
     def evaluate(x: Any, p: Any) -> Any:
-        result = evaluation_at(x, p)
+        result, new_state = evaluation_at(x, p)
         objective = sign * jnp.asarray(result.objective).astype(jnp.float64)
         parts = [
             jnp.ravel(jnp.asarray(array).astype(jnp.float64))
             for array in jax.tree.leaves(result.constraints)
         ]
-        return jnp.concatenate([objective[None], *parts])
+        flat_state = (
+            jnp.zeros(0)
+            if new_state is None
+            else jnp.concatenate(
+                [
+                    jnp.ravel(jnp.asarray(leaf)).astype(jnp.float64)
+                    for leaf in jax.tree.leaves(new_state)
+                ]
+            )
+        )
+        return jnp.concatenate([objective[None], *parts]), flat_state
+
+    def values(x: Any, p: Any) -> Any:
+        return evaluate(x, p)[0]
 
     def lagrangian(x: Any, p: Any, factor: Any, multipliers: Any) -> Any:
-        values = evaluate(x, p)
-        return factor * values[0] + jnp.dot(multipliers[:count], values[1:])
+        stacked = values(x, p)
+        return factor * stacked[0] + jnp.dot(multipliers[:count], stacked[1:])
 
-    return FlatFunctions(evaluate, constraints, lagrangian)
+    return FlatFunctions(
+        evaluate, values, constraints, lagrangian, parameter_size, state_size
+    )
 
 
 def sample_arguments(
-    variables: TreeLayout, params: ParamsLayout, multiplier_size: int
+    variables: TreeLayout, parameter_size: int, multiplier_size: int
 ) -> tuple[Any, ...]:
     """Returns concrete arguments of the Lagrangian, whose values detection ignores."""
     return (
         jnp.zeros(variables.size),
-        jnp.zeros(params.size),
+        jnp.zeros(parameter_size),
         jnp.asarray(1.0),
         jnp.zeros(multiplier_size),
     )
@@ -165,16 +216,15 @@ def load_asdex(options: CompileOptions) -> Any | None:
 
 
 def build_derivatives(
-    problem: Problem,
+    problem: Problem | StatefulProblem,
     functions: FlatFunctions,
     variables: TreeLayout,
-    params: ParamsLayout,
     multiplier_size: int,
     options: CompileOptions,
 ) -> DerivativeFunctions:
     """Returns the derivatives of a problem with their patterns."""
     asdex = load_asdex(options)
-    samples = sample_arguments(variables, params, multiplier_size)
+    samples = sample_arguments(variables, functions.parameter_size, multiplier_size)
     n = variables.size
     m = functions.constraint_size
 
@@ -183,9 +233,7 @@ def build_derivatives(
         if problem.jacobian_pattern is None or m == 0
         else as_entries(problem.jacobian_pattern, (m, n))
     )
-    first_order = first_order_derivative(
-        functions.evaluate, given, samples[:2], (m, n), asdex
-    )
+    first_order = first_order_derivative(functions, given, samples[:2], (m, n), asdex)
 
     hessian = None
     if options.hessian is Hessian.EXACT:
@@ -201,7 +249,7 @@ def build_derivatives(
 
 
 def first_order_derivative(
-    evaluate: FlatFunction,
+    functions: FlatFunctions,
     given: Entries | None,
     samples: tuple[Any, ...],
     shape: tuple[int, int],
@@ -209,17 +257,23 @@ def first_order_derivative(
 ) -> Derivative:
     """Returns the objective, gradient, constraints and Jacobian of a stacked evaluation.
 
-    `evaluate` returns the objective and then the `m` constraint values, so its Jacobian has
-    `1 + m` rows and the first one is the gradient. One transformation of the whole function
-    gives the values and the derivatives, so a computation that the objective and the
-    constraints share is differentiated once, and the values come out of the same pass. The
-    rows and columns of the result are those of the Jacobian of the constraints.
+    `functions.values` returns the objective and then the `m` constraint values, so its
+    Jacobian has `1 + m` rows and the first one is the gradient. One transformation of the
+    whole function gives the values and the derivatives, so a computation that the objective
+    and the constraints share is differentiated once, and the values come out of the same
+    pass. The rows and columns of the result are those of the Jacobian of the constraints. A
+    problem with state also returns its new state as a fifth output.
     """
     m, n = shape
+    evaluate, values, state_size = (
+        functions.evaluate,
+        functions.values,
+        functions.state_size,
+    )
     if asdex is None:
-        return dense_first_order(evaluate, given, shape)
+        return dense_first_order(evaluate, given, shape, state_size)
     if not hasattr(asdex, "value_and_jacobian_from_coloring"):
-        return separate_first_order(evaluate, given, samples, shape, asdex)
+        return separate_first_order(functions, given, samples, shape, asdex)
 
     # The objective row of the stacked Jacobian is dense, and only the constraints need
     # their sparsity detected. Detection would fail for an objective that asdex cannot
@@ -227,7 +281,7 @@ def first_order_derivative(
     if given is None and m > 0:
 
         def constraints(x: Any, p: Any) -> Any:
-            return evaluate(x, p)[1:]
+            return values(x, p)[1:]
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", asdex.DenseColoringWarning)
@@ -247,9 +301,8 @@ def first_order_derivative(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", asdex.DenseColoringWarning)
         coloring = colored_pattern(
-            asdex, "jacobian", evaluate, stacked, samples, (m + 1, n), "the Jacobian"
+            asdex, "jacobian", values, stacked, samples, (m + 1, n), "the Jacobian"
         )
-    evaluate_with_value = asdex.value_and_jacobian_from_coloring(evaluate, coloring)
     entries = entries_of(coloring.sparsity, (m + 1, n))
     objective_positions = np.flatnonzero(entries.rows == 0)
     constraint_positions = np.flatnonzero(entries.rows > 0)
@@ -257,17 +310,47 @@ def first_order_derivative(
     rows = (entries.rows[constraint_positions] - 1).astype(np.intc)
     columns = entries.columns[constraint_positions]
 
+    if state_size > 0:
+        # The new state is an auxiliary output of the function, which asdex passes through.
+        with_state = asdex.value_and_jacobian_from_coloring(
+            evaluate, coloring, has_aux=True
+        )
+
+        def sparse_with_state(x: Any, p: Any) -> Any:
+            (stacked_values, new_state), jacobian = with_state(x, p)
+            data = jacobian.data
+            gradient = jnp.zeros(n).at[objective_columns].set(data[objective_positions])
+            return (
+                stacked_values[0],
+                gradient,
+                stacked_values[1:],
+                data[constraint_positions],
+                new_state,
+            )
+
+        return Derivative(sparse_with_state, rows, columns)
+
+    evaluate_with_value = asdex.value_and_jacobian_from_coloring(values, coloring)
+
     def sparse(x: Any, p: Any) -> Any:
-        values, jacobian = evaluate_with_value(x, p)
+        stacked_values, jacobian = evaluate_with_value(x, p)
         data = jacobian.data
         gradient = jnp.zeros(n).at[objective_columns].set(data[objective_positions])
-        return values[0], gradient, values[1:], data[constraint_positions]
+        return (
+            stacked_values[0],
+            gradient,
+            stacked_values[1:],
+            data[constraint_positions],
+        )
 
     return Derivative(sparse, rows, columns)
 
 
 def dense_first_order(
-    evaluate: FlatFunction, given: Entries | None, shape: tuple[int, int]
+    evaluate: FlatFunction,
+    given: Entries | None,
+    shape: tuple[int, int],
+    state_size: int,
 ) -> Derivative:
     """Returns the first-order function from JAX's dense Jacobian of the stacked evaluation."""
     m, n = shape
@@ -276,18 +359,26 @@ def dense_first_order(
     differentiate = jax.jacfwd if n <= m + 1 else jax.jacrev
 
     def with_values(x: Any, p: Any) -> Any:
-        values = evaluate(x, p)
-        return values, values
+        stacked_values, new_state = evaluate(x, p)
+        return stacked_values, (stacked_values, new_state)
 
     def dense(x: Any, p: Any) -> Any:
-        jacobian, values = differentiate(with_values, has_aux=True)(x, p)
-        return values[0], jacobian[0], values[1:], jacobian[1:][rows, columns]
+        jacobian, (stacked_values, new_state) = differentiate(
+            with_values, has_aux=True
+        )(x, p)
+        result = (
+            stacked_values[0],
+            jacobian[0],
+            stacked_values[1:],
+            jacobian[1:][rows, columns],
+        )
+        return (*result, new_state) if state_size > 0 else result
 
     return Derivative(dense, entries.rows, entries.columns)
 
 
 def separate_first_order(
-    evaluate: FlatFunction,
+    functions: FlatFunctions,
     given: Entries | None,
     samples: tuple[Any, ...],
     shape: tuple[int, int],
@@ -296,20 +387,26 @@ def separate_first_order(
     """Returns the first-order function for a version of asdex that cannot return values.
 
     The gradient and the Jacobian come from two transformations, so a computation that the
-    objective and the constraints share runs for each of them.
+    objective and the constraints share runs for each of them. The new state of a problem
+    with state comes out of the objective pass.
     """
+    values = functions.values
+    evaluate = functions.evaluate
+    state_size = functions.state_size
 
     def objective(x: Any, p: Any) -> Any:
-        return evaluate(x, p)[0]
+        stacked_values, new_state = evaluate(x, p)
+        return stacked_values[0], new_state
 
     def constraints(x: Any, p: Any) -> Any:
-        return evaluate(x, p)[1:]
+        return values(x, p)[1:]
 
     jacobian = jacobian_derivative(constraints, given, samples, shape, asdex)
 
     def separate(x: Any, p: Any) -> Any:
-        value, gradient = jax.value_and_grad(objective)(x, p)
-        return value, gradient, constraints(x, p), jacobian.function(x, p)
+        (value, new_state), gradient = jax.value_and_grad(objective, has_aux=True)(x, p)
+        result = (value, gradient, constraints(x, p), jacobian.function(x, p))
+        return (*result, new_state) if state_size > 0 else result
 
     return Derivative(separate, jacobian.rows, jacobian.columns)
 
@@ -428,19 +525,22 @@ class ProgramArguments(NamedTuple):
     """The abstract arguments of the programs, which are float64 vectors and a scalar."""
 
     first_order: tuple[jax.ShapeDtypeStruct, ...]
-    """The variables and the parameters, which the objective, constraints and their first
-    derivatives take."""
+    """The variables and the parameters followed by the state, which the objective, constraints
+    and their first derivatives take."""
     second_order: tuple[jax.ShapeDtypeStruct, ...]
     """The arguments of the Hessian of the Lagrangian, which also has the objective factor
     and the multipliers."""
 
 
 def abstract_arguments(
-    variables: TreeLayout, params: ParamsLayout, multiplier_size: int
+    variables: TreeLayout, parameter_size: int, multiplier_size: int
 ) -> ProgramArguments:
-    """Returns the abstract arguments of the programs."""
+    """Returns the abstract arguments of the programs.
+
+    `parameter_size` is the length of the flat parameters followed by the flat state.
+    """
     x = jax.ShapeDtypeStruct((variables.size,), jnp.float64)
-    p = jax.ShapeDtypeStruct((params.size,), jnp.float64)
+    p = jax.ShapeDtypeStruct((parameter_size,), jnp.float64)
     factor = jax.ShapeDtypeStruct((), jnp.float64)
     multipliers = jax.ShapeDtypeStruct((multiplier_size,), jnp.float64)
     return ProgramArguments((x, p), (x, p, factor, multipliers))

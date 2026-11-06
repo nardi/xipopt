@@ -75,7 +75,10 @@ works, including named tuples, dataclasses and Equinox modules. The class of a n
 has to exist in the loading process, since nothing about it is stored.
 
 A problem with constraints also needs `constraints`, a tree with the structure and
-shapes of `Evaluation.constraints`, as a keyword argument.
+shapes of `Evaluation.constraints`, as a keyword argument. A problem that was compiled
+from a `StatefulProblem` also needs `state`, a tree with the structure and shapes of its
+state, as a keyword argument. The initial state itself comes from the file. A problem
+without state takes none.
 
 ## Other machines
 

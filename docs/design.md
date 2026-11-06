@@ -14,7 +14,8 @@ the first callback at a new point runs the first-order program:
 
 1. The callback copies Ipopt's array `x` into an input buffer that is 64-byte aligned.
 2. It calls `execute` from cyxla, which passes the buffers to the PJRT plugin.
-3. It keeps the four outputs of the program, together with a copy of `x`.
+3. It keeps the four outputs of the program, together with a copy of `x`. A problem with
+   state has a fifth output, which the guide on problem state describes.
 
 The other callbacks at the same point copy their share from the kept outputs and run no
 program. A callback at another point runs the program again. The point is compared bit
@@ -48,6 +49,27 @@ first reports the point as one where the functions cannot be evaluated, and Ipop
 shortens its step. A gradient that is not a number at a trial point therefore rejects
 the point, where an evaluation of the gradient alone at an accepted point would end the
 solve.
+
+## Problem state
+
+A `StatefulProblem` adds a vector of state to the programs. The flat parameter input of
+the programs contains the parameters followed by the state, so both programs read it
+without a new input and the derivatives, which only differentiate `x`, treat it as a
+constant. The first-order program has a fifth output, the new state, which the
+derivative transformations return as an auxiliary value.
+
+After the first-order program succeeds and every output is finite, the callback copies
+the new state over the state in the parameter input. A failed execution leaves it alone.
+The Hessian program has no state output. A solve writes the initial state, or the state
+of the solution it warm starts from, into the input before Ipopt starts, and reads the
+state back when Ipopt returns. A callback that finds its outputs in the cache runs no
+program, so it does not touch the state either. This is the reason results can depend on
+the order of evaluations, which the guide explains.
+
+The Hessian program reads the state that the first-order program returned at the same
+`x`. An inner solve that stops at a tolerance then starts from its solution and needs
+one iteration to confirm it, while an inner solve with a fixed number of steps still
+takes all of them.
 
 ## Callback and factorization time
 
