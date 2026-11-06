@@ -75,7 +75,10 @@ works, including named tuples, dataclasses and Equinox modules. The class of a n
 has to exist in the loading process, since nothing about it is stored.
 
 A problem with constraints also needs `constraints`, a tree with the structure and
-shapes of `Evaluation.constraints`, as a keyword argument.
+shapes of `Evaluation.constraints`, as a keyword argument. A problem that was compiled
+from a `StatefulProblem` also needs `state`, a tree with the structure and shapes of its
+state, as a keyword argument. The initial state itself comes from the file. A problem
+without state takes none.
 
 ## Other machines
 
@@ -94,7 +97,7 @@ machine with one and still runs on the CPU.
 Loading does not import asdex or numba, does not call the functions of the problem and
 does not trace anything. With `warm_up=True`, which is the default, it runs each program
 once, so that the first solve is as fast as the later ones. For a problem with 400
-variables a load took about 50 ms, where compiling it without a cache took about 1.5 s.
+variables a load took about 50 ms, while compiling it without a cache took about 1.5 s.
 Importing xipopt and JAX is the remaining cost of a new process, about 0.9 s.
 
 ## Trust

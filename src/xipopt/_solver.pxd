@@ -25,6 +25,8 @@ cdef enum:
     OBJECTIVE_FACTOR = 2
     MULTIPLIERS = 3
     INPUT_COUNT = 4
+    # The output of the first-order program that contains the new state, when there is one.
+    STATE_OUTPUT = 4
 
 
 cdef struct SolverState:
@@ -41,6 +43,10 @@ cdef struct SolverState:
     int* hessian_rows
     int* hessian_columns
     bint zero_copy
+    # The parameter input contains `parameter_count` parameters followed by `state_size`
+    # entries of state, which is zero for a problem without state.
+    int parameter_count
+    int state_size
     # The outputs of the first-order program at the point `cached_x`. A callback at that
     # point reads them, and a callback at another point runs the program again.
     double* cached_x
@@ -48,6 +54,9 @@ cdef struct SolverState:
     double* gradient_values
     double* constraint_values
     double* jacobian_values
+    # The state that the first-order program returned. It replaces the state in the
+    # parameter input once the program has succeeded.
+    double* state_values
     bint cache_valid
     # Whether the program failed or returned a value that is not a number at `cached_x`.
     bint cache_failed

@@ -1,6 +1,6 @@
 """Ipopt callbacks that execute cyxla programs without the GIL.
 
-A `NativeProblem` holds the compiled programs of one problem together with the buffers that
+A `NativeProblem` contains the compiled programs of one problem together with the buffers
 they read. Ipopt's callbacks copy its arrays into those buffers, execute a program and write
 the result into Ipopt's output arrays, so a solve never enters the interpreter unless the
 caller asked to observe the iterations.
@@ -134,6 +134,9 @@ class NativeResult(NamedTuple):
     """Seconds spent executing each program."""
     unused_derivatives: int
     """Points at which the first-order program computed derivatives that Ipopt never asked for."""
+    state: np.ndarray
+    """The state after the last successful execution of the first-order program, empty for a
+    problem without state."""
 
 
 @cython.cfunc
@@ -197,6 +200,7 @@ def execute_first_order(
     outputs[1] = state.gradient_values
     outputs[2] = state.constraint_values if state.constraint_count > 0 else cython.NULL
     outputs[3] = state.jacobian_values if state.jacobian_size > 0 else cython.NULL
+    outputs[STATE_OUTPUT] = state.state_values if state.state_size > 0 else cython.NULL
     start: cython.double = now()
     status: cython.int = execute(
         cython.address(state.programs[FIRST_ORDER]),
@@ -214,7 +218,17 @@ def execute_first_order(
         or not all_finite(state.gradient_values, n)
         or not all_finite(state.constraint_values, state.constraint_count)
         or not all_finite(state.jacobian_values, state.jacobian_size)
+        or not all_finite(state.state_values, state.state_size)
     )
+    if state.state_size > 0 and not state.cache_failed:
+        # The next evaluation starts from the state that this one ended in. A failed
+        # evaluation leaves the state as it was.
+        memcpy(
+            cython.cast(cython.pointer[ipnumber], state.inputs[PARAMETERS].host)
+            + state.parameter_count,
+            state.state_values,
+            state.state_size * cython.sizeof(ipnumber),
+        )
     return not state.cache_failed
 
 
@@ -462,12 +476,13 @@ class NativeProblem:
     """The programs and index arrays of a problem, with the buffers their callbacks share.
 
     `executables` has the first-order program and the Hessian of the Lagrangian, where
-    `None` leaves out the Hessian. Programs read the variables and the parameters, and the
-    Hessian program also the objective factor and the constraint multipliers. The first-order
-    program writes the objective, the gradient, the constraints and the Jacobian values, and
-    the callbacks that evaluate them at one point share one execution. The Jacobian and Hessian
-    entries follow the given row and column indices, and the Hessian contains the lower triangle
-    only.
+    `None` leaves out the Hessian. Programs read the variables and the parameters, followed
+    by the state if the problem has one, and the Hessian program also the objective factor
+    and the constraint multipliers. The first-order program writes the objective, the
+    gradient, the constraints and the Jacobian values, and the new state if there is one.
+    The callbacks that evaluate them at one point share one execution. The Jacobian and
+    Hessian entries follow the given row and column indices, and the Hessian contains the
+    lower triangle only.
     """
 
     state: cython.pointer[SolverState]
@@ -487,6 +502,7 @@ class NativeProblem:
         hessian_rows: object,
         hessian_columns: object,
         zero_copy: cython.bint = True,
+        state_size: cython.int = 0,
     ) -> None:
         self.state = cython.NULL
         self.executables = tuple(executables)
@@ -509,6 +525,8 @@ class NativeProblem:
         state.jacobian_size = jacobian_size
         state.hessian_size = hessian_size
         state.zero_copy = zero_copy
+        state.parameter_count = max(parameter_size, 1)
+        state.state_size = state_size
         state.jacobian_rows = copy_indices(jacobian_rows)
         state.jacobian_columns = copy_indices(jacobian_columns)
         state.hessian_rows = copy_indices(hessian_rows)
@@ -516,7 +534,7 @@ class NativeProblem:
 
         sizes: cython.int[INPUT_COUNT]
         sizes[VARIABLES] = variable_count
-        sizes[PARAMETERS] = max(parameter_size, 1)
+        sizes[PARAMETERS] = state.parameter_count + state_size
         sizes[OBJECTIVE_FACTOR] = 1
         sizes[MULTIPLIERS] = padded
         index: cython.int
@@ -552,8 +570,13 @@ class NativeProblem:
             cython.pointer[cython.double],
             calloc(max(jacobian_size, 1), cython.sizeof(ipnumber)),
         )
+        state.state_values = cython.cast(
+            cython.pointer[cython.double],
+            calloc(max(state_size, 1), cython.sizeof(ipnumber)),
+        )
         if (
-            state.cached_x == cython.NULL
+            state.state_values == cython.NULL
+            or state.cached_x == cython.NULL
             or state.objective_value == cython.NULL
             or state.gradient_values == cython.NULL
             or state.constraint_values == cython.NULL
@@ -567,7 +590,7 @@ class NativeProblem:
         executable = self.executables[FIRST_ORDER]
         state.programs[FIRST_ORDER].handle = executable.handle
         state.programs[FIRST_ORDER].num_inputs = OBJECTIVE_FACTOR
-        state.programs[FIRST_ORDER].num_outputs = 4
+        state.programs[FIRST_ORDER].num_outputs = 4 + (1 if state_size > 0 else 0)
         state.programs[FIRST_ORDER].output_bytes[0] = cython.sizeof(ipnumber)
         state.programs[FIRST_ORDER].output_bytes[1] = variable_count * cython.sizeof(
             ipnumber
@@ -577,6 +600,9 @@ class NativeProblem:
         )
         state.programs[FIRST_ORDER].output_bytes[3] = jacobian_size * cython.sizeof(
             ipnumber
+        )
+        state.programs[FIRST_ORDER].output_bytes[STATE_OUTPUT] = (
+            state_size * cython.sizeof(ipnumber)
         )
         if self.executables[HESSIAN] is not None:
             executable = self.executables[HESSIAN]
@@ -604,6 +630,7 @@ class NativeProblem:
         free(state.gradient_values)
         free(state.constraint_values)
         free(state.jacobian_values)
+        free(state.state_values)
         free(state)
 
     def notify(
@@ -671,13 +698,15 @@ class NativeProblem:
         settings: Sequence[tuple[str, IpoptValue]] = (),
         warm_start: Multipliers | None = None,
         observer: Callable[[IterationState], bool] | None = None,
+        initial_state: object = None,
     ) -> NativeResult:
         """Solves from `start` for the given parameters and bounds and returns the result.
 
-        The bounds are flat vectors, one entry per variable or per constraint. `settings` are
-        Ipopt options. The solve stops early when `observer` returns false.
-        With `warm_start`, its multipliers are the starting multipliers, which Ipopt only
-        reads when its option `warm_start_init_point` is `yes`.
+        The bounds are flat vectors, one entry per variable or per constraint. `settings`
+        are Ipopt options. The solve stops early when `observer` returns false. With
+        `warm_start`, its multipliers are the starting multipliers, which Ipopt only reads
+        when its option `warm_start_init_point` is `yes`. A problem with state starts from
+        `initial_state`, which is required for it and must be left out otherwise.
         """
         with SOLVE_LOCK:
             return self.solve_locked(
@@ -687,6 +716,7 @@ class NativeProblem:
                 settings,
                 warm_start,
                 observer,
+                initial_state,
             )
 
     @cython.cfunc
@@ -698,15 +728,20 @@ class NativeProblem:
         settings: Sequence[tuple[str, IpoptValue]],
         warm_start: Multipliers | None,
         observer: Callable[[IterationState], bool] | None,
+        initial_state: object,
     ) -> NativeResult:
         state: cython.pointer[SolverState] = self.state
         index: cython.int
         variable_count: cython.int = state.variable_count
         constraint_count: cython.int = state.constraint_count
         padded: cython.int = max(constraint_count, 1)
-        parameter_size: cython.int = cython.cast(
-            cython.int, state.inputs[PARAMETERS].size
-        )
+        parameter_size: cython.int = state.parameter_count
+        state_size: cython.int = state.state_size
+        if (initial_state is None) != (state_size == 0):
+            raise ValueError(
+                "A problem with state needs an initial state, and one without state "
+                "takes none."
+            )
 
         variables = float_array(start, variable_count, "starting point")
         parameter_values = float_array(parameters, parameter_size, "parameters")
@@ -752,6 +787,15 @@ class NativeProblem:
             cython.address(parameter_view[0]),
             parameter_size * cython.sizeof(ipnumber),
         )
+        if state_size > 0:
+            state_values = float_array(initial_state, state_size, "initial state")
+            state_view: cython.double[::1] = state_values
+            memcpy(
+                cython.cast(cython.pointer[ipnumber], state.inputs[PARAMETERS].host)
+                + parameter_size,
+                cython.address(state_view[0]),
+                state_size * cython.sizeof(ipnumber),
+            )
         for index in range(CALLBACK_COUNT):
             state.callback_calls[index] = 0
             state.callback_hits[index] = 0
@@ -817,6 +861,15 @@ class NativeProblem:
             error = self.observer_error
             self.observer_error = None
             raise error
+        final_state = np.zeros(state_size)
+        if state_size > 0:
+            final_view: cython.double[::1] = final_state
+            memcpy(
+                cython.address(final_view[0]),
+                cython.cast(cython.pointer[ipnumber], state.inputs[PARAMETERS].host)
+                + parameter_size,
+                state_size * cython.sizeof(ipnumber),
+            )
         return NativeResult(
             status=status,
             objective=objective,
@@ -837,6 +890,7 @@ class NativeProblem:
             ),
             seconds=tuple([state.seconds[index] for index in range(PROGRAM_COUNT)]),
             unused_derivatives=state.unused_derivatives,
+            state=final_state,
         )
 
 
