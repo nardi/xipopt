@@ -1,12 +1,12 @@
-# Saving and loading
+# Saved problems
 
 Compiling a problem traces its functions, finds the sparsity of the derivatives, lowers
-five programs and compiles them. The [disk cache](parameters.md) shortens this on a
-machine that has done it before. A file shortens it everywhere. `save` writes a compiled
-problem to a file, and `load` reads it in another process, on another machine, or later,
-without tracing, detecting sparsity or compiling anything.
+the programs and compiles them. The [disk cache](parameters.md) shortens this on a
+machine that has done it before. Saving to a file shortens it on every machine. `save`
+writes a compiled problem to a file, and `load` reads it in another process, on another
+machine, or later, without tracing, detecting sparsity or compiling anything.
 
-## Saving
+## Saved files
 
 <!-- name: test_docs_saving -->
 ```python
@@ -19,9 +19,9 @@ import numpy as np
 import xipopt as xip
 
 problem = xip.Problem(
-    variables={"position": xip.Variable(lower=-2.0, upper=2.0, shape=(2,))},
+    variables={"position": xip.Variable(shape=(2,))},
     objective=lambda x, params: jnp.sum((x["position"] - params["target"]) ** 2),
-    constraints=(xip.Constraint(lambda x, params: jnp.sum(x["position"]), upper=1.0),),
+    constraints=(lambda x, params: jnp.sum(x["position"]),),
 )
 params = {"target": np.array([1.0, 1.0])}
 compiled = xip.compile(problem, params)
@@ -30,21 +30,32 @@ path = Path(tempfile.mkdtemp()) / "problem.xip"
 xip.save(compiled, path)
 ```
 
-The file holds the five programs with their StableHLO, the sparsity structure, the
-bounds and the compile options. `.xip` is the usual extension. `dumps` returns the same
-data as bytes, for sending it to a worker process.
+The file contains the two programs with their StableHLO, the sparsity structure and the
+compile options. It does not contain the bounds, which are passed to `solve`. `.xip` is
+the conventional extension. `dumps` returns the same data as bytes, for sending it to a
+worker process.
 
-## Loading
+## Loaded problems
 
-The file does not hold the functions of the problem or the trees of its variables and
+The file does not contain the functions of the problem or the trees of its variables and
 parameters. `load` takes the trees, so that a loaded problem works like a compiled one:
 `x0` and the result use the structure of `variables`, and `solve` takes parameters in
 the structure of `params`.
 
 <!-- name: test_docs_saving -->
 ```python
-loaded = xip.load(path, problem.variables, params)
-solution = xip.solve(loaded, params=params)
+loaded = xip.load(
+    path,
+    problem.variables,
+    params,
+    constraints=(np.zeros(()),),
+)
+solution = xip.solve(
+    loaded,
+    params=params,
+    variable_bounds=xip.Bounds(-2.0, 2.0),
+    constraint_bounds=xip.Bounds(upper=1.0),
+)
 print(solution.x, solution.objective)
 ```
 
@@ -58,10 +69,16 @@ assert loaded.statistics.compiled == 0
 The leaves of `variables` are `Variable`s or arrays, and the leaves of `params` are
 arrays or `jax.ShapeDtypeStruct`s, as for `compile`. Only their paths and shapes matter.
 They are checked against the file, and a tree with another leaf or shape raises an error
-that names the first difference. The bounds come from the file, so the `Variable`s of
-the tree may carry any bounds, or the tree may hold plain arrays. Any pytree that JAX
-can flatten works, including named tuples, dataclasses and Equinox modules. The class of
-a node only has to exist in the loading process, since nothing about it is stored.
+that names the first difference. The bounds do not come from the file. They are passed
+to `solve` as `variable_bounds` and `constraint_bounds`. Any pytree that JAX can flatten
+works, including named tuples, dataclasses and Equinox modules. The class of a node only
+has to exist in the loading process, since nothing about it is stored.
+
+A problem with constraints also needs `constraints`, a tree with the structure and
+shapes of `Evaluation.constraints`, as a keyword argument. A problem that was compiled
+from a `StatefulProblem` also needs `state`, a tree with the structure and shapes of its
+state, as a keyword argument. The initial state itself comes from the file. A problem
+without state takes none.
 
 ## Other machines
 
@@ -75,7 +92,7 @@ compilation of a problem without the lowering and the sparsity detection. Pass
 The programs always run on the CPU, so a file made on a machine without a GPU loads on a
 machine with one and still runs on the CPU.
 
-## What a loaded problem skips
+## Steps a loaded problem skips
 
 Loading does not import asdex or numba, does not call the functions of the problem and
 does not trace anything. With `warm_up=True`, which is the default, it runs each program

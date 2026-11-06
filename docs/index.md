@@ -40,14 +40,19 @@ def objective(x, params):
 
 
 problem = xip.Problem(
-    variables=xip.Variable(lower=1.0, upper=5.0, shape=(4,)),
+    variables=xip.Variable(shape=(4,)),
     objective=objective,
     constraints=(
-        xip.Constraint(lambda x, params: jnp.prod(x), lower=25.0),
-        xip.Constraint(lambda x, params: jnp.sum(x**2), lower=40.0, upper=40.0),
+        lambda x, params: jnp.prod(x),
+        lambda x, params: jnp.sum(x**2),
     ),
 )
-solution = xip.solve(problem, jnp.array([1.0, 5.0, 5.0, 1.0]))
+solution = xip.solve(
+    problem,
+    jnp.array([1.0, 5.0, 5.0, 1.0]),
+    variable_bounds=xip.Bounds(1.0, 5.0),
+    constraint_bounds=xip.Bounds(lower=(25.0, 40.0), upper=(jnp.inf, 40.0)),
+)
 print(solution.status.name, solution.objective)
 ```
 
@@ -61,17 +66,18 @@ assert abs(solution.objective - 17.0140173) < 1e-6
 and the [disk cache](guide/parameters.md) makes later processes skip most of that.
 Compile once with `compile` to solve the same problem again and again.
 
-## What it handles
+## Supported problems
 
 - Any JAX function that is smooth where Ipopt evaluates it. The functions may use
   control flow such as `lax.scan`, and anything else that cyxla can lower.
-- Variables and parameters as pytrees, with bounds on every variable.
+- Variables and parameters as pytrees. The bounds are passed to each solve, so one
+  compiled problem serves many sets of bounds.
 - Equality and inequality constraints of any shape, which Ipopt sees as one vector.
 - Sparse Jacobians and Hessians, found by [asdex](https://pypi.org/project/asdex/) or
   given as patterns. The [derivatives guide](guide/derivatives.md) explains both.
 - Warm starts from the multipliers of an earlier solution.
 
-## What it does not handle
+## Unsupported problems
 
 Ipopt finds a local solution of a continuous problem. It has no integer variables, and
 it does not prove that its solution is globally optimal.

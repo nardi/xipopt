@@ -9,14 +9,21 @@ import xipopt as xip
 def main() -> None:
     """Solves problem 71 of Hock and Schittkowski and checks the known optimum."""
     problem = xip.Problem(
-        variables=xip.Variable(lower=1.0, upper=5.0, shape=(4,)),
-        objective=lambda x, params: x[0] * x[3] * (x[0] + x[1] + x[2]) + x[2],
-        constraints=(
-            xip.Constraint(lambda x, params: jnp.prod(x), lower=25.0),
-            xip.Constraint(lambda x, params: jnp.sum(x**2), lower=40.0, upper=40.0),
+        variables=xip.Variable(shape=(4,)),
+        evaluate=xip.evaluation_from_functions(
+            objective=lambda x, params: x[0] * x[3] * (x[0] + x[1] + x[2]) + x[2],
+            constraints=(
+                lambda x, params: jnp.prod(x),
+                lambda x, params: jnp.sum(x**2),
+            ),
         ),
     )
-    solution = xip.solve(problem, np.array([1.0, 5.0, 5.0, 1.0]))
+    solution = xip.solve(
+        problem,
+        np.array([1.0, 5.0, 5.0, 1.0]),
+        variable_bounds=xip.Bounds(1.0, 5.0),
+        constraint_bounds=xip.Bounds((25.0, 40.0), (np.inf, 40.0)),
+    )
     assert solution.status is xip.Status.SOLVE_SUCCEEDED, solution.status
     assert abs(solution.objective - 17.0140173) < 1e-6, solution.objective
     print(

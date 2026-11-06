@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from jax.experimental import sparse
-from problems import bratu_control, hs071
+from problems import BRATU_BOUNDS, bratu_control, hs071
 
 import xipopt as xip
 from xipopt import _cache, _compile, _layout, _patterns, _solver
@@ -23,40 +23,41 @@ def test_ipopt_and_blas() -> None:
 
 def test_native_problem_rejects_wrong_programs() -> None:
     """Checks that the number of programs is checked."""
-    with pytest.raises(ValueError, match="Expected 5 programs"):
-        _solver.NativeProblem(
-            [None],
-            np.zeros(1),
-            np.ones(1),
-            np.zeros(0),
-            np.zeros(0),
-            1,
-            EMPTY,
-            EMPTY,
-            EMPTY,
-            EMPTY,
-        )
+    with pytest.raises(ValueError, match="Expected 2 programs"):
+        _solver.NativeProblem([None], 1, 0, 0, EMPTY, EMPTY, EMPTY, EMPTY)
+
+
+def test_native_problem_needs_the_first_order_program() -> None:
+    """Checks that the program for the objective and the constraints cannot be left out."""
+    with pytest.raises(ValueError, match="first-order program is required"):
+        _solver.NativeProblem([None, None], 1, 0, 0, EMPTY, EMPTY, EMPTY, EMPTY)
 
 
 def test_native_problem_rejects_unsupported_shapes() -> None:
     """Checks the errors of Ipopt's problem creation and of the vectors of a solve."""
+    first_order = xip.compile(hs071().problem).native.executables[0]
     with pytest.raises(_solver.SolverError, match="could not create the problem"):
         # A constraint needs at least one Jacobian entry.
         _solver.NativeProblem(
-            [None] * 5,
+            [first_order, None], 1, 1, 0, EMPTY, EMPTY, EMPTY, EMPTY
+        ).solve(
+            np.zeros(1),
+            np.zeros(1),
             np.zeros(1),
             np.ones(1),
             np.zeros(1),
             np.ones(1),
-            1,
-            EMPTY,
-            EMPTY,
-            EMPTY,
-            EMPTY,
-        ).solve(np.zeros(1), np.zeros(1))
+        )
     compiled = xip.compile(hs071().problem)
     with pytest.raises(ValueError, match="starting point must have shape"):
-        compiled.native.solve(np.zeros(3), np.zeros(1))
+        compiled.native.solve(
+            np.zeros(3),
+            np.zeros(1),
+            np.zeros(4),
+            np.ones(4),
+            np.zeros(2),
+            np.ones(2),
+        )
 
 
 def test_second_compilation_loads_from_the_cache() -> None:
@@ -64,16 +65,18 @@ def test_second_compilation_loads_from_the_cache() -> None:
     problem = bratu_control(7)
     first = xip.compile(problem)
     second = xip.compile(problem)
-    assert first.statistics.lowered == 5
-    assert first.statistics.compiled == 5
+    assert first.statistics.lowered == 2
+    assert first.statistics.compiled == 2
     assert second.statistics.lowered == 0
     assert second.statistics.compiled == 0
-    assert second.statistics.loaded == 5
+    assert second.statistics.loaded == 2
     assert second.statistics.detect_seconds == 0.0
     np.testing.assert_array_equal(
         first.structure.jacobian_rows, second.structure.jacobian_rows
     )
-    assert xip.solve(second).objective == pytest.approx(xip.solve(first).objective)
+    assert xip.solve(second, constraint_bounds=BRATU_BOUNDS).objective == pytest.approx(
+        xip.solve(first, constraint_bounds=BRATU_BOUNDS).objective
+    )
 
 
 def test_cache_distinguishes_captured_constants() -> None:
@@ -82,7 +85,9 @@ def test_cache_distinguishes_captured_constants() -> None:
     def problem_with(shift: np.ndarray) -> xip.Problem:
         return xip.Problem(
             variables=xip.Variable(shape=(3,)),
-            objective=lambda x, params: jnp.sum((x - shift) ** 2),
+            evaluate=xip.evaluation_from_functions(
+                objective=lambda x, params: jnp.sum((x - shift) ** 2)
+            ),
         )
 
     first = xip.solve(problem_with(np.array([1.0, 2.0, 3.0])))
@@ -97,7 +102,7 @@ def test_disabled_cache_always_builds() -> None:
     problem = bratu_control(6)
     for _ in range(2):
         statistics = xip.compile(problem, options=options).statistics
-        assert statistics.lowered == 5
+        assert statistics.lowered == 2
         assert statistics.loaded == 0
 
 
@@ -108,7 +113,7 @@ def test_broken_structure_file_is_rebuilt() -> None:
     xip.compile(problem)
     (file,) = set(cyxla.cache_directory().glob(f"*{_cache.STRUCTURE_SUFFIX}")) - before
     file.write_bytes(b"not an archive")
-    assert xip.compile(problem).statistics.lowered == 5
+    assert xip.compile(problem).statistics.lowered == 2
     assert file.read_bytes() != b"not an archive"
 
 
@@ -123,9 +128,15 @@ def test_key_without_asdex_leaves_it_out(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_layouts_reject_wrong_values() -> None:
-    """Checks the errors of building and using layouts."""
-    with pytest.raises(ValueError, match="lower bound above its upper bound"):
-        _layout.variable_layout(xip.Variable(lower=2.0, upper=1.0))
+    """Checks the errors of building and using layouts and of solving with bad bounds."""
+    known = hs071()
+    compiled = xip.compile(known.problem)
+    with pytest.raises(ValueError, match="lower bound above an upper bound"):
+        xip.solve(
+            compiled,
+            variable_bounds=xip.Bounds(2.0, 1.0),
+            constraint_bounds=known.constraint_bounds,
+        )
     with pytest.raises(TypeError, match="must be a Variable"):
         _layout.variable_layout({"a": 1.0})
     with pytest.raises(ValueError, match="at least one variable"):
@@ -140,22 +151,32 @@ def test_layouts_reject_wrong_values() -> None:
 def test_compile_rejects_malformed_problems() -> None:
     """Checks the errors for objectives, constraints and bounds."""
     variables = xip.Variable(shape=(2,))
-    with pytest.raises(ValueError, match="must return a scalar"):
-        xip.compile(xip.Problem(variables, objective=lambda x, params: x))
-    with pytest.raises(TypeError, match="must be a Constraint"):
-        xip.compile(xip.Problem(variables, constraints=(lambda x, p: x,)))  # ty: ignore[invalid-argument-type]
-    function = lambda x, params: x  # noqa: E731
-    with pytest.raises(ValueError, match="do not broadcast"):
+    with pytest.raises(ValueError, match="objective must be a scalar"):
         xip.compile(
             xip.Problem(
-                variables, constraints=(xip.Constraint(function, lower=np.zeros(3)),)
+                variables=variables,
+                evaluate=xip.evaluation_from_functions(objective=lambda x, params: x),
             )
         )
-    with pytest.raises(ValueError, match="lower bound above its upper bound"):
+    with pytest.raises(TypeError, match="must return an Evaluation"):
         xip.compile(
-            xip.Problem(
-                variables, constraints=(xip.Constraint(function, lower=2.0, upper=1.0),)
-            )
+            xip.Problem(variables, evaluate=lambda x, params: (0.0, ()))  # ty: ignore[invalid-argument-type]
+        )
+    function = lambda x, params: x  # noqa: E731
+    problem = xip.Problem(
+        variables=variables, objective=xip.no_objective, constraints=(function,)
+    )
+    with pytest.raises(ValueError, match="does not broadcast"):
+        xip.solve(
+            problem,
+            np.zeros(2),
+            constraint_bounds=xip.Bounds(lower=np.zeros(3)),
+        )
+    with pytest.raises(ValueError, match="lower bound above an upper bound"):
+        xip.solve(
+            problem,
+            np.zeros(2),
+            constraint_bounds=xip.Bounds(lower=2.0, upper=1.0),
         )
 
 
@@ -166,9 +187,9 @@ def test_output_sizes_are_checked() -> None:
         output_bytes = (4,)
 
     structure = _cache.Structure(EMPTY, EMPTY, EMPTY, EMPTY)
-    with pytest.raises(RuntimeError, match="gradient program writes"):
+    with pytest.raises(RuntimeError, match="first_order program writes"):
         _compile.check_output_sizes(
-            [None, Wrong(), None, None, None],  # ty: ignore[invalid-argument-type]
+            [Wrong(), None],  # ty: ignore[invalid-argument-type]
             3,
             0,
             structure,

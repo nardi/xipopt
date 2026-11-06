@@ -3,19 +3,23 @@
 Ipopt needs the gradient of the objective, the Jacobian of the constraints and the
 Hessian of the Lagrangian. The last two are matrices, and for most large problems they
 are mostly zeros. Ipopt stores and factorizes only their nonzero entries, so a problem
-solves fast when xipopt tells it where those are.
+solves faster when xipopt reports where those are.
 
-## What gets compiled
+## Compiled programs
 
-xipopt compiles five programs from the functions of a problem.
+xipopt compiles two programs from `Problem.evaluate`.
 
-| Ipopt callback | Program |
+| Ipopt callbacks | Program |
 | --- | --- |
-| `eval_f` | The objective |
-| `eval_grad_f` | The gradient of the objective |
-| `eval_g` | All constraints, concatenated |
-| `eval_jac_g` | The Jacobian, at its nonzero entries |
+| `eval_f`, `eval_grad_f`, `eval_g`, `eval_jac_g` | The objective, its gradient, all constraints concatenated, and the Jacobian at its nonzero entries, in one pass |
 | `eval_h` | The Hessian of the Lagrangian, at the nonzero entries of its lower triangle |
+
+The first program differentiates the objective and the constraints together, so work
+that they share is differentiated once, and the values come out of the same pass. The
+Jacobian comes from forward mode, which takes one Jacobian-vector product for each
+variable, or from reverse mode, which takes one vector-Jacobian product for each output.
+xipopt uses the mode that needs fewer products for the shape of the problem. With a
+sparsity pattern, one product covers every column or row of the same color.
 
 The Lagrangian is `factor * objective + multipliers @ constraints`, with the factor and
 the multipliers as inputs of the program. The entries of the Jacobian and the Hessian
@@ -55,7 +59,7 @@ def equation(x, params):
 problem = xip.Problem(
     variables={"u": xip.Variable(shape=(SIZE,)), "c": xip.Variable(shape=(SIZE,))},
     objective=objective,
-    constraints=(xip.Constraint(equation, lower=0.0, upper=0.0),),
+    constraints=(equation,),
 )
 compiled = xip.compile(problem)
 print(compiled.structure.jacobian_rows.size, compiled.structure.hessian_rows.size)
@@ -86,10 +90,12 @@ as `jacobian_pattern` and `hessian_pattern`, in any of four forms.
 - A `jax.experimental.sparse.BCOO` matrix, whose stored entries count as nonzero.
 
 A Hessian pattern is square, and it may list one triangle or both. xipopt uses the lower
-triangle, which is the part Ipopt asks for.
+triangle, which is the part that Ipopt uses.
 
 <!-- name: test_docs_derivatives -->
 ```python
+import dataclasses
+
 rows, columns = [], []
 for row in range(SIZE):
     rows.append(row)
@@ -99,11 +105,12 @@ for row in range(SIZE):
             rows.append(row)
             columns.append(SIZE + neighbor)
 
-given = problem._replace(
+given = dataclasses.replace(
+    problem,
     jacobian_pattern=(np.array(rows), np.array(columns)),
     hessian_pattern=(np.arange(2 * SIZE), np.arange(2 * SIZE)),
 )
-solution = xip.solve(given)
+solution = xip.solve(given, constraint_bounds=xip.Bounds(0.0, 0.0))
 ```
 
 <!-- name: test_docs_derivatives -->
@@ -133,7 +140,7 @@ The third choice changes the algorithm and its convergence, which is why it is n
 silently. A dense pattern is not an error. It only means that the problem is as costly
 as a dense one.
 
-## Without asdex
+## Derivatives without asdex
 
 asdex is a dependency, so it is normally there. When someone has uninstalled it,
 `Derivatives.AUTOMATIC` computes dense derivatives and compiling warns.

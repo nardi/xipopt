@@ -19,6 +19,9 @@ from xipopt._options import CompileOptions
 from xipopt._patterns import Entries, pattern_digest
 from xipopt._types import BuildStatistics
 
+PROGRAM_LAYOUT = b"first-order and hessian programs"
+"""Names the set of programs, so that cached programs of another set are not found."""
+
 STRUCTURE_SUFFIX = ".xipopt.npz"
 """Suffix of the files with the sparsity structure of a problem."""
 
@@ -56,8 +59,7 @@ def jaxpr_digest(function: Any, arguments: tuple[Any, ...]) -> bytes:
 
 
 def problem_key(
-    objective: bytes,
-    constraints: bytes,
+    evaluate: bytes,
     options: CompileOptions,
     sense: int,
     jacobian_pattern: Entries | None,
@@ -65,8 +67,8 @@ def problem_key(
 ) -> str:
     """Returns the cache key of the programs of a problem."""
     return cyxla.cache_key(
-        objective,
-        constraints,
+        evaluate,
+        PROGRAM_LAYOUT,
         repr(options),
         repr(sense),
         pattern_digest(jacobian_pattern),

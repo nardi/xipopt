@@ -75,12 +75,15 @@ def test_objective_matches_scipy(seed: int) -> None:
         variables=xip.Variable(shape=(size,)),
         objective=objective,
         constraints=(
-            xip.Constraint(lambda x, params: params["matrix"] @ x, upper=data["limit"]),
-            xip.Constraint(lambda x, params: jnp.sum(x**2), upper=radius**2),
+            lambda x, params: params["matrix"] @ x,
+            lambda x, params: jnp.sum(x**2),
         ),
     )
     solution = xip.solve(
-        problem, params=data, options=xip.SolveOptions(tolerance=1e-10)
+        problem,
+        params=data,
+        options=xip.SolveOptions(tolerance=1e-10),
+        constraint_bounds=xip.Bounds(upper=(data["limit"], radius**2)),
     )
     assert solution.status.succeeded
     assert solution.objective == pytest.approx(
@@ -95,16 +98,17 @@ def test_compiled_problem_solves_other_parameters() -> None:
         variables=xip.Variable(shape=(size,)),
         objective=objective,
         constraints=(
-            xip.Constraint(lambda x, params: params["matrix"] @ x, upper=1.0),
-            xip.Constraint(lambda x, params: jnp.sum(x**2), upper=radius**2),
+            lambda x, params: params["matrix"] @ x,
+            lambda x, params: jnp.sum(x**2),
         ),
     )
     first = random_instance(0, size, rows)
     compiled = xip.compile(problem, first)
-    assert compiled.statistics.compiled == 5
+    assert compiled.statistics.compiled == 2
+    constraint_bounds = xip.Bounds(upper=(1.0, radius**2))
     for seed in (1, 2):
         data = random_instance(seed, size, rows)
-        solution = xip.solve(compiled, params=data)
+        solution = xip.solve(compiled, params=data, constraint_bounds=constraint_bounds)
         assert solution.status.succeeded
         # The constraint holds with the matrix of the new parameters.
         assert np.all(data["matrix"] @ solution.x <= 1.0 + 1e-6)

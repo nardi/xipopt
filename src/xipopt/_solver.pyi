@@ -30,8 +30,12 @@ class NativeResult(NamedTuple):
     lower_multipliers: Float[np.ndarray, " n"]
     upper_multipliers: Float[np.ndarray, " n"]
     iterations: int
-    calls: tuple[int, ...]
+    callback_calls: tuple[int, ...]
+    callback_hits: tuple[int, ...]
+    executions: tuple[int, ...]
     seconds: tuple[float, ...]
+    unused_derivatives: int
+    state: Float[np.ndarray, " s"]
 
 class Multipliers(NamedTuple):
     constraints: Float[np.ndarray, " m"]
@@ -49,22 +53,26 @@ class NativeProblem:
     def __init__(
         self,
         executables: Sequence[Executable | None],
-        variable_lower: Float[np.ndarray, " n"],
-        variable_upper: Float[np.ndarray, " n"],
-        constraint_lower: Float[np.ndarray, " m"],
-        constraint_upper: Float[np.ndarray, " m"],
+        variable_count: int,
+        constraint_count: int,
         parameter_size: int,
         jacobian_rows: Int[np.ndarray, " nnz"],
         jacobian_columns: Int[np.ndarray, " nnz"],
         hessian_rows: Int[np.ndarray, " nnz"],
         hessian_columns: Int[np.ndarray, " nnz"],
         zero_copy: bool = True,
+        state_size: int = 0,
     ) -> None: ...
     def solve(
         self,
         start: Float[np.ndarray, " n"],
         parameters: Float[np.ndarray, " p"],
+        variable_lower: Float[np.ndarray, " n"],
+        variable_upper: Float[np.ndarray, " n"],
+        constraint_lower: Float[np.ndarray, " m"],
+        constraint_upper: Float[np.ndarray, " m"],
         settings: Sequence[tuple[str, IpoptValue]] = (),
         warm_start: Multipliers | None = None,
         observer: Callable[[IterationState], bool] | None = None,
+        initial_state: Float[np.ndarray, " s"] | None = None,
     ) -> NativeResult: ...

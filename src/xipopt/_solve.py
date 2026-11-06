@@ -8,9 +8,10 @@ import cyxla
 import numpy as np
 from jaxtyping import PyTree
 
+from xipopt._bounds import bounds_vectors, start_point
 from xipopt._compile import CompiledProblem, compile  # noqa: A004
 from xipopt._options import CompileOptions, Hessian, SolveOptions
-from xipopt._problem_types import Problem
+from xipopt._problem_types import BoundsTree, Problem, StatefulProblem
 from xipopt._solver import (
     IpoptValue,
     IterationState,
@@ -23,6 +24,7 @@ from xipopt._types import (
     CallbackStatistics,
     IterationInfo,
     Program,
+    ProgramStatistics,
     Sense,
     SolveStatistics,
     Status,
@@ -41,9 +43,10 @@ class Solution(NamedTuple):
     objective: float
     """The objective at `x`, in the sense of the problem."""
     status: Status
-    constraints: tuple[np.ndarray, ...]
-    """The value of each constraint at `x`, in its own shape."""
-    constraint_multipliers: tuple[np.ndarray, ...]
+    constraints: PyTree[np.ndarray]
+    """The constraint values at `x`, in the structure of `Evaluation.constraints`."""
+    constraint_multipliers: PyTree[np.ndarray]
+    """The multipliers of the constraints, in the structure of `Evaluation.constraints`."""
     lower_multipliers: PyTree[np.ndarray]
     """Multipliers of the lower bounds of the variables, in the structure of `x`."""
     upper_multipliers: PyTree[np.ndarray]
@@ -54,29 +57,58 @@ class Solution(NamedTuple):
     """Counters of the callbacks that Ipopt made during the solve."""
     build: BuildStatistics
     """Time and counts of compiling the problem, zero if it was compiled before."""
+    state: PyTree[np.ndarray] = None
+    """The state of a `StatefulProblem` after the last evaluation, or `None` without state.
+
+    Passing the solution as `warm_start` continues from this state.
+    """
 
 
 def solve(
-    problem: CompiledProblem | Problem,
+    problem: CompiledProblem | Problem | StatefulProblem,
     x0: PyTree[Any] = None,
     params: PyTree[Any] = None,
     options: SolveOptions = SolveOptions(),
     compile_options: CompileOptions = CompileOptions(),
     warm_start: Solution | None = None,
+    *,
+    variable_bounds: BoundsTree | None = None,
+    constraint_bounds: BoundsTree | None = None,
 ) -> Solution:
-    """Solves a problem for the given parameter values, starting from `x0`.
+    """Solves a problem for the given parameter values and bounds, starting from `x0`.
 
     A `Problem` is compiled first with `compile_options`, while a `CompiledProblem` ignores
-    them. Without `x0` the start is the point nearest to the origin inside the bounds.
-    A previous `Solution` as `warm_start` supplies the multipliers that Ipopt starts from,
-    and `x0` should then be its `x`.
+    them. `variable_bounds` and `constraint_bounds` are a `Bounds`, or a pytree with the
+    structure of the variables or of the constraints and a `Bounds` at every leaf. Without
+    `variable_bounds` the variables are unbounded, and a problem with constraints needs
+    `constraint_bounds`. The bounds are read when the solve starts, so one compiled problem
+    can be solved for many sets of bounds. Without `x0` the start is the point nearest to
+    the origin inside the bounds. A previous `Solution` as `warm_start` supplies the
+    multipliers that Ipopt starts from, and `x0` should then be its `x`. A problem with
+    state starts from the state of the `warm_start` when it has one, and from the initial
+    state of the problem otherwise.
     """
     build = BuildStatistics()
-    if isinstance(problem, Problem):
+    if isinstance(problem, Problem | StatefulProblem):
         problem = compile(problem, params, compile_options)
         build = problem.statistics
     variables = problem.variables
-    start = variables.start() if x0 is None else variables.flatten(x0)
+    variable_lower, variable_upper = bounds_vectors(
+        variable_bounds, variables, "variable_bounds", "variables"
+    )
+    if (constraint_bounds is None) != (problem.constraints.size == 0):
+        raise ValueError(
+            "`constraint_bounds` is required for a problem with constraints and not "
+            "allowed for one without."
+        )
+    constraint_lower, constraint_upper = bounds_vectors(
+        constraint_bounds, problem.constraints, "constraint_bounds", "constraints"
+    )
+    start = (
+        start_point(variable_lower, variable_upper)
+        if x0 is None
+        else variables.flatten(x0, "starting point")
+    )
     multipliers = (
         None if warm_start is None else warm_start_multipliers(problem, warm_start)
     )
@@ -110,9 +142,14 @@ def solve(
     result = problem.native.solve(
         start,
         problem.params.flatten(params),
+        variable_lower,
+        variable_upper,
+        constraint_lower,
+        constraint_upper,
         ipopt_settings(problem, options, warm_start is not None),
         multipliers,
         observer,
+        starting_state(problem, warm_start),
     )
     seconds = time.perf_counter() - begin
     status = Status(result.status)
@@ -123,6 +160,18 @@ def solve(
             f"{errors.last_message}"
         )
     return unpack(problem, result, status, sign, seconds, build)
+
+
+def starting_state(
+    problem: CompiledProblem, warm_start: Solution | None
+) -> np.ndarray | None:
+    """Returns the flat state that a solve starts from, or `None` for a problem without state."""
+    layout = problem.state
+    if layout is None:
+        return None
+    if warm_start is not None and warm_start.state is not None:
+        return layout.flatten(warm_start.state)
+    return problem.initial_state
 
 
 def ipopt_settings(
@@ -147,31 +196,36 @@ def ipopt_settings(
 
 def warm_start_multipliers(problem: CompiledProblem, solution: Solution) -> Multipliers:
     """Returns the multipliers of a solution as the flat vectors that Ipopt starts from."""
-    if len(solution.constraint_multipliers) != len(problem.constraint_shapes):
-        raise ValueError(
-            "The solution to warm start from has a different number of constraints."
-        )
-    parts = [
-        np.asarray(part, np.float64).ravel() for part in solution.constraint_multipliers
-    ]
     return Multipliers(
-        np.concatenate(parts) if parts else np.zeros(0),
-        problem.variables.flatten(solution.lower_multipliers),
-        problem.variables.flatten(solution.upper_multipliers),
+        problem.constraints.flatten(
+            solution.constraint_multipliers, "constraint multipliers"
+        ),
+        problem.variables.flatten(solution.lower_multipliers, "lower multipliers"),
+        problem.variables.flatten(solution.upper_multipliers, "upper multipliers"),
     )
 
 
-def split_constraints(
-    problem: CompiledProblem, values: np.ndarray
-) -> tuple[np.ndarray, ...]:
-    """Returns a vector over all constraints as one array per constraint."""
-    arrays = []
-    offset = 0
-    for shape in problem.constraint_shapes:
-        size = math.prod(shape)
-        arrays.append(values[offset : offset + size].reshape(shape))
-        offset += size
-    return tuple(arrays)
+def solve_statistics(result: NativeResult) -> SolveStatistics:
+    """Returns the counters of a solve from the counters of the native layer."""
+
+    def callback(index: int) -> CallbackStatistics:
+        return CallbackStatistics(
+            result.callback_calls[index], result.callback_hits[index]
+        )
+
+    def program(which: Program) -> ProgramStatistics:
+        return ProgramStatistics(result.executions[which], result.seconds[which])
+
+    return SolveStatistics(
+        objective=callback(0),
+        gradient=callback(1),
+        constraints=callback(2),
+        jacobian=callback(3),
+        hessian=callback(4),
+        first_order_program=program(Program.FIRST_ORDER),
+        hessian_program=program(Program.HESSIAN),
+        unused_derivatives=result.unused_derivatives,
+    )
 
 
 def unpack(
@@ -187,19 +241,15 @@ def unpack(
         x=problem.variables.unflatten(result.variables),
         objective=sign * result.objective,
         status=status,
-        constraints=split_constraints(problem, result.constraints),
-        constraint_multipliers=split_constraints(
-            problem, result.constraint_multipliers
+        constraints=problem.constraints.unflatten(result.constraints),
+        constraint_multipliers=problem.constraints.unflatten(
+            result.constraint_multipliers
         ),
         lower_multipliers=problem.variables.unflatten(result.lower_multipliers),
         upper_multipliers=problem.variables.unflatten(result.upper_multipliers),
         iterations=result.iterations,
         solving_seconds=seconds,
-        statistics=SolveStatistics(
-            *(
-                CallbackStatistics(result.calls[program], result.seconds[program])
-                for program in Program
-            )
-        ),
+        statistics=solve_statistics(result),
         build=build,
+        state=None if problem.state is None else problem.state.unflatten(result.state),
     )

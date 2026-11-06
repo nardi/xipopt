@@ -36,7 +36,7 @@ gives smaller gaps:
 The first table comes from a shared virtual machine with four cores of an Intel Xeon at
 2.1 GHz, so treat differences below 10% as noise. The problems converge in a handful of
 iterations, which makes the callbacks a large share of the time. The advantage shrinks
-as the problem grows, because the factorization takes over. Run the script on your own
+as the problem grows, because the factorization dominates. Run the script on your own
 hardware and problems to see where yours falls:
 
 ```bash
@@ -49,22 +49,98 @@ uv run python benchmarks/compare.py
 cyipopt has to be built against the Ipopt of the wheel. The workflow
 `.github/workflows/benchmark.yml` does that on a GitHub runner.
 
-## Building without line tracing
+## Builds without line tracing
 
 The development environment compiles the Cython module with line tracing for coverage,
 which slows the callbacks down by several times. Reinstall the package without it before
 timing anything. The [development page](../development.md) shows how.
 
-## Choosing the linear solver
+## Linear solvers
 
 For problems with thousands of variables the factorization dominates. Compare MUMPS and
 SPRAL on your problem with `SolveOptions(linear_solver=...)`, since the better one
 depends on the structure of the matrix. SPRAL uses OpenMP threads, so set
 `OMP_NUM_THREADS` to share cores sensibly with other work.
 
-## Reducing build time
+## Build time
 
-Compiling five programs takes a second or two for a small problem, and sparsity
+Compiling the programs takes a second or two for a small problem, and sparsity
 detection and compilation grow with the size of the functions. The disk cache removes
 that cost for every run after the first. A problem that gives its sparsity patterns
 skips detection, which can be most of the build for large functions.
+
+## Work shared between the objective and the constraints
+
+The objective and the constraints often need the same intermediate result, such as the
+solution of an inner solve or a simulation. Separate functions compute it once for each
+of them, and the compiler cannot merge the copies when they call code with side effects,
+such as a library with native kernels. A single `evaluate` computes it once, and the
+first-order program differentiates it once.
+
+<!-- name: test_docs_performance -->
+```python
+import jax.numpy as jnp
+import numpy as np
+
+import xipopt as xip
+
+
+def evaluate(x, params):
+    # This stands for an expensive computation that both parts read.
+    state = jnp.sin(x)
+    return xip.Evaluation(jnp.sum(state**2), (jnp.sum(state)[None],))
+
+
+problem = xip.Problem(
+    variables=xip.Variable(shape=(2,)),
+    evaluate=evaluate,
+)
+solution = xip.solve(
+    problem,
+    np.array([0.5, 0.5]),
+    variable_bounds=xip.Bounds(-1.0, 1.0),
+    constraint_bounds=xip.Bounds(lower=0.1),
+)
+```
+
+<!-- name: test_docs_performance -->
+```python
+assert solution.status.succeeded
+statistics = solution.statistics
+print(statistics.first_order_program, statistics.unused_derivatives)
+```
+
+`Solution.statistics` shows what a solve cost. The callbacks of Ipopt at one point share
+one execution of the first-order program, so its `executions` are fewer than the calls
+of the four callbacks added up. Ipopt also evaluates trial points that it rejects, and
+the program computes the derivatives there too. `unused_derivatives` counts these
+points. When it is large compared with the executions and the derivatives cost much more
+than the values, the evaluation of derivatives at rejected points is the cost of this
+design.
+
+## Loading time of saved problems
+
+A saved problem loads by deserializing one executable per program, which takes most of
+the time for large programs. `load` and `loads` deserialize on several threads by
+default, since the work releases the GIL, and `workers=1` loads one program after
+another. A problem has at most two programs, and the Hessian is usually the larger one,
+so the time can fall to that of the Hessian at best. With a limited-memory Hessian there
+is a single program and nothing to overlap.
+
+Measurements with `benchmarks/loading.py`, on a problem with an unrolled Newton solve of
+40 iterations, on four processors:
+
+| Hessian | Source locations | Programs | File | One thread | Default threads |
+|---|---|---:|---:|---:|---:|
+| Exact | Kept | 2 | 9.97 MB | 2045 ms | 2339 ms |
+| Exact | Removed with `debug_info=False` | 2 | 8.07 MB | 2312 ms | 2220 ms |
+| Limited memory | Kept | 1 | 3.29 MB | 882 ms | 905 ms |
+| Limited memory | Removed with `debug_info=False` | 1 | 2.72 MB | 788 ms | 717 ms |
+
+The difference between one and several threads is within the variation from run to run
+for this problem, so the threads gain little here. Removing the source locations shrinks
+the file by 17 to 19%.
+
+The numbers come from one machine and one problem and vary from run to run. Removing the
+source locations also removes the file and line information that profiles of the plugin
+use. Passing `warm_up=False` skips the run of each program that follows loading.

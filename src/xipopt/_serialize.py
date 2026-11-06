@@ -1,7 +1,7 @@
 """Saving a compiled problem to a file and loading it in another process.
 
-The file holds the compiled programs, the sparsity structure, the bounds and the options. It
-does not hold the functions of the problem or the trees of its variables and parameters. The
+The file contains the compiled programs, the sparsity structure and the options. It does
+not contain the functions of the problem or the trees of its variables and parameters. The
 caller gives the trees when loading, which makes a loaded problem work exactly like a
 compiled one, and the file only keeps the path and shape of each leaf to check them against.
 """
@@ -9,23 +9,39 @@ compiled one, and the file only keeps the path and shape of each leaf to check t
 import importlib.metadata
 import os
 import time
+import warnings
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal
 
 import cyxla
+import jax
 import numpy as np
-from jaxtyping import PyTree
+from jaxtyping import Float, PyTree
 
 from xipopt import _cache
+from xipopt._bounds import bounds_vectors, start_point
 from xipopt._compile import CompiledProblem, check_output_sizes, make_native
-from xipopt._layout import params_layout, variable_layout_for
+from xipopt._layout import (
+    ParamsLayout,
+    layout_for,
+    params_layout,
+    state_layout,
+)
 from xipopt._options import CompileOptions
+from xipopt._problem_types import BoundsTree, is_variable
 from xipopt._types import Program, Sense
 
 KIND = "xipopt.problem"
-"""The kind of bundle that holds a compiled problem."""
+"""The kind of bundle that contains a compiled problem."""
 
-VERSION = 1
-"""The version of the payload, which changes when the data in the file changes."""
+VERSION = 3
+"""The version of the payload, which changes when the data in the file changes.
+
+The payload contains the first-order program, the Hessian program, the sparsity structure,
+the initial state of a stateful problem, and the paths and shapes of the trees. It contains
+no bounds.
+"""
 
 
 def dumps(compiled: CompiledProblem) -> bytes:
@@ -49,23 +65,53 @@ def loads(
     variables: PyTree[Any],
     params: PyTree[Any] = None,
     *,
+    constraints: PyTree[Any] = None,
+    state: PyTree[Any] = None,
+    variable_bounds: BoundsTree | None = None,
     on_mismatch: Literal["recompile", "raise"] = "recompile",
     warm_up: bool = True,
+    import_providers: bool = False,
+    workers: int | None = None,
 ) -> CompiledProblem:
     """Returns the compiled problem that `dumps` made from bytes.
 
     `variables` and `params` are trees with the structure that the problem was compiled for.
     The leaves of `variables` are `Variable`s or arrays, and those of `params` are arrays or
-    `jax.ShapeDtypeStruct`s, as for `compile`. Only their paths and shapes are checked
-    against the file, and the bounds come from the file. The result solves like a compiled
-    problem, with the structure of `variables` for `x`, except that its `problem` is `None`.
+    `jax.ShapeDtypeStruct`s, as for `compile`. A problem with constraints also needs
+    `constraints`, a tree with the structure and shapes of `Evaluation.constraints`, and a
+    problem compiled from a `StatefulProblem` needs `state`, a tree with the structure and
+    shapes of its state. The initial state comes from the file. Only the paths and shapes of
+    the trees are checked against the file. The file contains no bounds, so they go to
+    `solve`. The result solves like a compiled problem, with the structure of `variables`
+    for `x`, except that its `problem` is `None`.
 
     Executables that were stored for another machine are replaced by a compilation of the
-    StableHLO, unless `on_mismatch` is `raise`. With `warm_up` each program runs once, so the
-    first solve is as fast as the later ones.
+    StableHLO, unless `on_mismatch` is `raise`. With `warm_up` each program runs once, so
+    the first solve is as fast as the later ones. The warm-up runs on the point nearest to
+    the origin inside `variable_bounds` and on the given `params`, or on zeros for
+    parameters that are only shapes. Without `variable_bounds` the point is zero. A program
+    that fails there raises a warning and the problem loads anyway.
+
+    A program that calls a library such as `klujax` needs that library imported before
+    loading, since its handlers live in the library. Loading raises a `MissingTargetError`
+    that names the library and its version when it is not. With `import_providers` loading
+    imports those libraries itself, which runs their code, so only use it for files you
+    trust.
+
+    The programs of the file load on `workers` threads, which by default is one per program
+    up to the number of processors. Pass 1 to load them one after another.
     """
     return read(
-        cyxla.Bundle(data, KIND, VERSION), variables, params, on_mismatch, warm_up
+        cyxla.Bundle(data, KIND, VERSION),
+        variables,
+        params,
+        constraints,
+        state,
+        variable_bounds,
+        on_mismatch,
+        warm_up,
+        import_providers,
+        workers,
     )
 
 
@@ -74,12 +120,26 @@ def load(
     variables: PyTree[Any],
     params: PyTree[Any] = None,
     *,
+    constraints: PyTree[Any] = None,
+    state: PyTree[Any] = None,
+    variable_bounds: BoundsTree | None = None,
     on_mismatch: Literal["recompile", "raise"] = "recompile",
     warm_up: bool = True,
+    import_providers: bool = False,
+    workers: int | None = None,
 ) -> CompiledProblem:
     """Returns the compiled problem that `save` wrote to a file, as `loads` does."""
     return read(
-        cyxla.Bundle.read(path, KIND, VERSION), variables, params, on_mismatch, warm_up
+        cyxla.Bundle.read(path, KIND, VERSION),
+        variables,
+        params,
+        constraints,
+        state,
+        variable_bounds,
+        on_mismatch,
+        warm_up,
+        import_providers,
+        workers,
     )
 
 
@@ -88,15 +148,14 @@ def pack(compiled: CompiledProblem) -> tuple[cyxla.BundleWriter, dict[str, Any]]
 
     The programs are added to the writer, and their records go into the header.
     """
+    if compiled.options.host_callbacks:
+        raise ValueError(
+            "A problem compiled with `host_callbacks=True` cannot be saved, because its "
+            "programs refer to Python callbacks of this process."
+        )
     writer = cyxla.BundleWriter(KIND, VERSION)
-    arrays = {
-        "variable_lower": compiled.variables.lower,
-        "variable_upper": compiled.variables.upper,
-        "constraint_lower": compiled.constraint_lower,
-        "constraint_upper": compiled.constraint_upper,
-    }
-    for name, values in arrays.items():
-        writer.add(name, np.ascontiguousarray(values, np.float64))
+    if compiled.state is not None:
+        writer.add("initial_state", np.ascontiguousarray(compiled.initial_state))
     for name in _cache.Structure._fields:
         writer.add(
             name, np.ascontiguousarray(getattr(compiled.structure, name), np.intc)
@@ -114,9 +173,14 @@ def pack(compiled: CompiledProblem) -> tuple[cyxla.BundleWriter, dict[str, Any]]
         "cyxla": cyxla.__version__,
         "options": cyxla.encode_record(compiled.options),
         "sense": int(compiled.sense),
-        "constraint_shapes": [list(shape) for shape in compiled.constraint_shapes],
         "variables": cyxla.encode_fingerprint(compiled.variables.fingerprint),
+        "constraints": cyxla.encode_fingerprint(compiled.constraints.fingerprint),
         "params": cyxla.encode_fingerprint(compiled.params.fingerprint),
+        "state": (
+            None
+            if compiled.state is None
+            else cyxla.encode_fingerprint(compiled.state.fingerprint)
+        ),
         "programs": records,
     }
     return writer, header
@@ -126,22 +190,40 @@ def read(
     bundle: cyxla.Bundle,
     variables: PyTree[Any],
     params: PyTree[Any],
+    constraints: PyTree[Any],
+    state: PyTree[Any],
+    variable_bounds: BoundsTree | None,
     on_mismatch: Literal["recompile", "raise"],
     warm_up: bool,
+    import_providers: bool,
+    workers: int | None,
 ) -> CompiledProblem:
     """Builds a compiled problem from a bundle and the trees of its variables and parameters."""
     start = time.perf_counter()
     meta = bundle.meta
     records = meta["programs"]
-    needed = cyxla.record_custom_calls([record for record in records if record])
+    present = [record for record in records if record]
+    needed = cyxla.record_custom_calls(present)
     cyxla.initialize(platform="cpu", jax_targets=bool(needed))
+    cyxla.check_targets(present, import_providers)
 
-    variable_layout = variable_layout_for(
-        variables,
-        bundle.array("variable_lower", np.float64).copy(),
-        bundle.array("variable_upper", np.float64).copy(),
-        cyxla.decode_fingerprint(meta["variables"]),
+    variable_layout = layout_for(
+        variables, cyxla.decode_fingerprint(meta["variables"]), "variables", is_variable
     )
+    expected_constraints = cyxla.decode_fingerprint(meta["constraints"])
+    if constraints is None and expected_constraints:
+        raise ValueError(
+            "The problem in the file has constraints, so `constraints` is required."
+        )
+    constraint_layout = layout_for(
+        () if constraints is None else constraints,
+        expected_constraints,
+        "constraints",
+    )
+    lower, upper = bounds_vectors(
+        variable_bounds, variable_layout, "variable_bounds", "variables"
+    )
+    point = start_point(lower, upper)
     layout = params_layout(params)
     cyxla.check_fingerprint(
         cyxla.decode_fingerprint(meta["params"]), layout.fingerprint, "parameters"
@@ -149,24 +231,42 @@ def read(
     structure = _cache.Structure(
         *(bundle.array(name, np.intc).copy() for name in _cache.Structure._fields)
     )
+    state_fingerprint = meta.get("state")
+    if (state_fingerprint is None) != (state is None):
+        raise ValueError(
+            "The problem in the file has state, so `state` is required."
+            if state_fingerprint is not None
+            else "The problem in the file has no state, so `state` must be left out."
+        )
+    state_info = None
+    initial_state = np.zeros(0)
+    if state_fingerprint is not None:
+        state_info = state_layout(state)
+        cyxla.check_fingerprint(
+            cyxla.decode_fingerprint(state_fingerprint), state_info.fingerprint, "state"
+        )
+        initial_state = bundle.array("initial_state", np.float64).copy()
 
+    loaded_programs = load_programs(bundle, records, on_mismatch, workers)
     statistics = cyxla.CompileStatistics()
     executables = []
-    for record in records:
-        if record is None:
+    for program, loaded in zip(Program, loaded_programs, strict=True):
+        if loaded is None:
             executables.append(None)
             continue
-        executable, loaded = cyxla.load_program(bundle, record, on_mismatch)
+        executable, program_statistics = loaded
         if warm_up:
-            executable.warm_up()
-        statistics = statistics.add(loaded)
+            warm_up_program(program, executable, point, layout, params, initial_state)
+        statistics = statistics.add(program_statistics)
         executables.append(executable)
 
     options = cyxla.decode_record(CompileOptions, meta["options"])
-    constraint_lower = bundle.array("constraint_lower", np.float64).copy()
-    constraint_upper = bundle.array("constraint_upper", np.float64).copy()
     check_output_sizes(
-        executables, variable_layout.size, constraint_lower.size, structure
+        executables,
+        variable_layout.size,
+        constraint_layout.size,
+        structure,
+        initial_state.size,
     )
     return CompiledProblem(
         problem=None,
@@ -174,18 +274,91 @@ def read(
         sense=Sense(meta["sense"]),
         variables=variable_layout,
         params=layout,
-        constraint_shapes=tuple(tuple(shape) for shape in meta["constraint_shapes"]),
-        constraint_lower=constraint_lower,
-        constraint_upper=constraint_upper,
+        constraints=constraint_layout,
         native=make_native(
             executables,
             variable_layout,
             layout,
-            constraint_lower,
-            constraint_upper,
+            constraint_layout,
             structure,
             options,
+            initial_state.size,
         ),
         structure=structure,
         statistics=_cache.combine(statistics, 0.0, 0.0, 0, time.perf_counter() - start),
+        state=state_info,
+        initial_state=initial_state,
     )
+
+
+def load_programs(
+    bundle: cyxla.Bundle,
+    records: Sequence[dict[str, Any] | None],
+    on_mismatch: Literal["recompile", "raise"],
+    workers: int | None,
+) -> list[tuple[cyxla.Executable, cyxla.CompileStatistics] | None]:
+    """Loads the executables of the records, on several threads when there is more than one.
+
+    Deserializing an executable releases the GIL and takes most of the time of a load, so
+    the programs overlap. A record that is `None` stays `None`. The first failure is raised
+    once every thread has finished. `workers` is the number of threads, which by default is
+    one per program up to the number of processors, and 1 loads them one after another.
+    """
+    present = [record for record in records if record is not None]
+    count = min(len(present), os.cpu_count() or 1) if workers is None else workers
+    if count <= 1 or len(present) <= 1:
+        results = [
+            cyxla.load_program(bundle, record, on_mismatch) for record in present
+        ]
+    else:
+        with ThreadPoolExecutor(count) as pool:
+            results = list(
+                pool.map(
+                    lambda record: cyxla.load_program(bundle, record, on_mismatch),
+                    present,
+                )
+            )
+    iterator = iter(results)
+    return [None if record is None else next(iterator) for record in records]
+
+
+def warm_up_parameters(
+    layout: ParamsLayout, params: PyTree[Any]
+) -> Float[np.ndarray, " p"]:
+    """Returns the flat parameters to warm up with, which are zeros for shapes without values."""
+    if any(isinstance(leaf, jax.ShapeDtypeStruct) for leaf in jax.tree.leaves(params)):
+        return np.zeros(layout.size)
+    return layout.flatten(params)
+
+
+def warm_up_program(
+    program: Program,
+    executable: cyxla.Executable,
+    point: Float[np.ndarray, " n"],
+    layout: ParamsLayout,
+    params: PyTree[Any],
+    initial_state: Float[np.ndarray, " s"] = np.zeros(0),
+) -> None:
+    """Runs a program once on a plausible input, so that its first real call is not slower.
+
+    Zeros are a bad input for a program that factorizes a matrix, which fails on a singular
+    one. A failure here says nothing about whether the program works elsewhere, since the
+    run only loads code, so it raises a warning and loading continues.
+    """
+    expected = executable.input_types
+    assert expected is not None
+    values: Sequence[np.ndarray] = [
+        point,
+        np.concatenate([warm_up_parameters(layout, params), initial_state]),
+        np.ones(()),
+        np.zeros(expected[-1].shape),
+    ]
+    try:
+        executable.warm_up(values[: len(expected)])
+    except RuntimeError as error:
+        warnings.warn(
+            f"The {program.name.lower()} program failed to run once while loading, so it "
+            f"was not warmed up: {error}",
+            RuntimeWarning,
+            stacklevel=4,
+        )

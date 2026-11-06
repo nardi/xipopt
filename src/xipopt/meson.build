@@ -1,5 +1,6 @@
 python.install_sources(
   '__init__.py',
+  '_bounds.py',
   '_cache.py',
   '_compile.py',
   '_layout.py',

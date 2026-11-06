@@ -6,7 +6,7 @@ import threading
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from problems import bratu_control, hs071
+from problems import BRATU_BOUNDS, bratu_control, hs071
 
 import xipopt as xip
 
@@ -17,15 +17,39 @@ def compiled() -> xip.CompiledProblem:
     return xip.compile(hs071().problem)
 
 
-START = hs071().start
+KNOWN = hs071()
+"""Problem 71 with its starting point, its bounds and its published solution."""
+START = KNOWN.start
+VARIABLE_BOUNDS = KNOWN.variable_bounds
+"""The variable bounds of problem 71, which go to `solve`."""
+CONSTRAINT_BOUNDS = KNOWN.constraint_bounds
+"""The constraint bounds of problem 71, which go to `solve`."""
 
 
 def test_options_reach_ipopt(compiled: xip.CompiledProblem) -> None:
     """Checks that the fields of the options change the solve."""
-    loose = xip.solve(compiled, START, options=xip.SolveOptions(tolerance=1e-2))
-    tight = xip.solve(compiled, START, options=xip.SolveOptions(tolerance=1e-12))
+    loose = xip.solve(
+        compiled,
+        START,
+        options=xip.SolveOptions(tolerance=1e-2),
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
+    )
+    tight = xip.solve(
+        compiled,
+        START,
+        options=xip.SolveOptions(tolerance=1e-12),
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
+    )
     assert loose.iterations < tight.iterations
-    limited = xip.solve(compiled, START, options=xip.SolveOptions(max_iterations=2))
+    limited = xip.solve(
+        compiled,
+        START,
+        options=xip.SolveOptions(max_iterations=2),
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
+    )
     assert limited.status is xip.Status.MAXIMUM_ITERATIONS_EXCEEDED
     assert not limited.status.succeeded
     assert limited.iterations == 2
@@ -35,7 +59,11 @@ def test_time_limit_stops_a_solve() -> None:
     """Checks that the wall time limit ends a solve that needs many iterations."""
     problem = xip.Problem(
         variables=xip.Variable(shape=(2,)),
-        objective=lambda x, params: 100.0 * (x[1] - x[0] ** 2) ** 2 + (1 - x[0]) ** 2,
+        evaluate=xip.evaluation_from_functions(
+            objective=lambda x, params: (
+                100.0 * (x[1] - x[0] ** 2) ** 2 + (1 - x[0]) ** 2
+            )
+        ),
     )
     solution = xip.solve(
         problem,
@@ -48,7 +76,11 @@ def test_time_limit_stops_a_solve() -> None:
 def test_infinite_time_limit_is_no_limit(compiled: xip.CompiledProblem) -> None:
     """Checks that an infinite limit is left out instead of passed to Ipopt."""
     solution = xip.solve(
-        compiled, START, options=xip.SolveOptions(time_limit=float("inf"))
+        compiled,
+        START,
+        options=xip.SolveOptions(time_limit=float("inf")),
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
     )
     assert solution.status.succeeded
 
@@ -59,7 +91,11 @@ def test_linear_solvers(
 ) -> None:
     """Checks that both sparse solvers of the wheel solve the problem."""
     solution = xip.solve(
-        compiled, START, options=xip.SolveOptions(linear_solver=linear_solver)
+        compiled,
+        START,
+        options=xip.SolveOptions(linear_solver=linear_solver),
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
     )
     assert solution.status.succeeded
     assert solution.objective == pytest.approx(17.0140173, abs=1e-6)
@@ -77,7 +113,13 @@ def test_settings_of_the_caller_come_last(
         ),
         blas_threads=None,
     )
-    xip.solve(compiled, START, options=options)
+    xip.solve(
+        compiled,
+        START,
+        options=options,
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
+    )
     # Ipopt buffers its output in the C++ runtime of Windows until the process ends.
     if sys.platform != "win32":
         assert "iter" in capfd.readouterr().out
@@ -90,12 +132,16 @@ def test_rejected_settings_raise(compiled: xip.CompiledProblem) -> None:
             compiled,
             START,
             options=xip.SolveOptions(settings=(xip.IpoptSetting("no_such_option", 1),)),
+            variable_bounds=VARIABLE_BOUNDS,
+            constraint_bounds=CONSTRAINT_BOUNDS,
         )
     with pytest.raises(ValueError, match="rejected the option mu_strategy"):
         xip.solve(
             compiled,
             START,
             options=xip.SolveOptions(settings=(xip.IpoptSetting("mu_strategy", "x"),)),
+            variable_bounds=VARIABLE_BOUNDS,
+            constraint_bounds=CONSTRAINT_BOUNDS,
         )
     for value in (True, None, (1,)):
         with pytest.raises(TypeError, match="must be a string, an integer or a float"):
@@ -105,6 +151,8 @@ def test_rejected_settings_raise(compiled: xip.CompiledProblem) -> None:
                 options=xip.SolveOptions(
                     settings=(xip.IpoptSetting("max_iter", value),)  # ty: ignore[invalid-argument-type]
                 ),
+                variable_bounds=VARIABLE_BOUNDS,
+                constraint_bounds=CONSTRAINT_BOUNDS,
             )
 
 
@@ -112,7 +160,11 @@ def test_callback_sees_every_iteration(compiled: xip.CompiledProblem) -> None:
     """Checks the information that the callback receives."""
     seen: list[xip.IterationInfo] = []
     solution = xip.solve(
-        compiled, START, options=xip.SolveOptions(callback=seen.append)
+        compiled,
+        START,
+        options=xip.SolveOptions(callback=seen.append),
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
     )
     assert [info.iteration for info in seen] == list(range(solution.iterations + 1))
     last = seen[-1]
@@ -135,6 +187,8 @@ def test_callback_stops_the_solve(compiled: xip.CompiledProblem) -> None:
         compiled,
         START,
         options=xip.SolveOptions(callback=lambda info: info.iteration < 2),
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
     )
     assert solution.status is xip.Status.USER_REQUESTED_STOP
     assert solution.iterations == 2
@@ -147,27 +201,44 @@ def test_callback_exceptions_propagate(compiled: xip.CompiledProblem) -> None:
         raise KeyError("stop here")
 
     with pytest.raises(KeyError, match="stop here"):
-        xip.solve(compiled, START, options=xip.SolveOptions(callback=callback))
+        xip.solve(
+            compiled,
+            START,
+            options=xip.SolveOptions(callback=callback),
+            variable_bounds=VARIABLE_BOUNDS,
+            constraint_bounds=CONSTRAINT_BOUNDS,
+        )
     # The problem solves again afterwards.
-    assert xip.solve(compiled, START).status.succeeded
+    assert xip.solve(
+        compiled,
+        START,
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
+    ).status.succeeded
 
 
 def test_callback_maximization_reports_the_objective_of_the_problem() -> None:
     """Checks that the callback sees the objective in the sense of the problem."""
     problem = xip.Problem(
-        variables=xip.Variable(lower=-2.0, upper=2.0),
-        objective=lambda x, params: 3.0 - (x - 0.5) ** 2,
+        variables=xip.Variable(),
+        evaluate=xip.evaluation_from_functions(
+            objective=lambda x, params: 3.0 - (x - 0.5) ** 2
+        ),
         sense=xip.Sense.MAXIMIZE,
     )
     seen: list[xip.IterationInfo] = []
-    xip.solve(problem, options=xip.SolveOptions(callback=seen.append))
+    xip.solve(
+        problem,
+        options=xip.SolveOptions(callback=seen.append),
+        variable_bounds=xip.Bounds(-2.0, 2.0),
+    )
     assert seen[-1].objective == pytest.approx(3.0)
 
 
 def test_warm_start_needs_fewer_iterations() -> None:
     """Checks that the multipliers of a solution start a similar solve closer to the answer."""
     compiled = xip.compile(bratu_control(20))
-    cold = xip.solve(compiled)
+    cold = xip.solve(compiled, constraint_bounds=BRATU_BOUNDS)
     warm = xip.solve(
         compiled,
         cold.x,
@@ -178,10 +249,25 @@ def test_warm_start_needs_fewer_iterations() -> None:
             )
         ),
         warm_start=cold,
+        constraint_bounds=BRATU_BOUNDS,
     )
     assert warm.status.succeeded
     assert warm.iterations < cold.iterations
     assert warm.objective == pytest.approx(cold.objective, rel=1e-6)
+
+
+def test_warm_start_of_a_problem_without_constraints() -> None:
+    """Checks that a problem without constraints warm starts from its own solution."""
+    problem = xip.Problem(
+        xip.Variable(shape=(2,)),
+        objective=lambda x, params: jnp.sum((x - jnp.array([1.0, 2.0])) ** 2),
+    )
+    compiled = xip.compile(problem)
+    first = xip.solve(compiled)
+    second = xip.solve(compiled, first.x, warm_start=first)
+    assert second.status.succeeded
+    assert second.constraints == ()
+    np.testing.assert_allclose(second.x, [1.0, 2.0], atol=1e-6)
 
 
 def test_warm_start_checks_the_solution(compiled: xip.CompiledProblem) -> None:
@@ -189,11 +275,19 @@ def test_warm_start_checks_the_solution(compiled: xip.CompiledProblem) -> None:
     other = xip.solve(
         xip.Problem(
             variables=xip.Variable(shape=(4,)),
-            objective=lambda x, params: jnp.sum(x**2),
+            evaluate=xip.evaluation_from_functions(
+                objective=lambda x, params: jnp.sum(x**2)
+            ),
         )
     )
-    with pytest.raises(ValueError, match="different number of constraints"):
-        xip.solve(compiled, START, warm_start=other)
+    with pytest.raises(ValueError, match="constraint multipliers have structure"):
+        xip.solve(
+            compiled,
+            START,
+            warm_start=other,
+            variable_bounds=VARIABLE_BOUNDS,
+            constraint_bounds=CONSTRAINT_BOUNDS,
+        )
 
 
 def test_concurrent_solves_are_serialized(compiled: xip.CompiledProblem) -> None:
@@ -201,7 +295,14 @@ def test_concurrent_solves_are_serialized(compiled: xip.CompiledProblem) -> None
     results: list[float] = []
 
     def work() -> None:
-        results.append(xip.solve(compiled, START).objective)
+        results.append(
+            xip.solve(
+                compiled,
+                START,
+                variable_bounds=VARIABLE_BOUNDS,
+                constraint_bounds=CONSTRAINT_BOUNDS,
+            ).objective
+        )
 
     threads = [threading.Thread(target=work) for _ in range(4)]
     for thread in threads:
@@ -213,12 +314,28 @@ def test_concurrent_solves_are_serialized(compiled: xip.CompiledProblem) -> None
 
 def test_wrong_inputs_are_reported(compiled: xip.CompiledProblem) -> None:
     """Checks the errors for a starting point and parameters of the wrong layout."""
-    with pytest.raises(ValueError, match="values have structure"):
-        xip.solve(compiled, {"a": START})
+    with pytest.raises(ValueError, match="starting point have structure"):
+        xip.solve(
+            compiled,
+            {"a": START},
+            variable_bounds=VARIABLE_BOUNDS,
+            constraint_bounds=CONSTRAINT_BOUNDS,
+        )
     with pytest.raises(ValueError, match="A value has shape"):
-        xip.solve(compiled, np.zeros(3))
+        xip.solve(
+            compiled,
+            np.zeros(3),
+            variable_bounds=VARIABLE_BOUNDS,
+            constraint_bounds=CONSTRAINT_BOUNDS,
+        )
     with pytest.raises(ValueError, match="parameters have structure"):
-        xip.solve(compiled, START, params=np.zeros(2))
+        xip.solve(
+            compiled,
+            START,
+            params=np.zeros(2),
+            variable_bounds=VARIABLE_BOUNDS,
+            constraint_bounds=CONSTRAINT_BOUNDS,
+        )
 
 
 def test_failing_programs_are_raised(
@@ -232,6 +349,17 @@ def test_failing_programs_are_raised(
         cyxla, "error_info", lambda: cyxla.ErrorInfo(next(calls), "the plugin failed")
     )
     with pytest.raises(RuntimeError, match="the plugin failed"):
-        xip.solve(compiled, START, options=xip.SolveOptions(max_iterations=1))
+        xip.solve(
+            compiled,
+            START,
+            options=xip.SolveOptions(max_iterations=1),
+            variable_bounds=VARIABLE_BOUNDS,
+            constraint_bounds=CONSTRAINT_BOUNDS,
+        )
     # A failure during a solve that succeeds is not an error.
-    assert xip.solve(compiled, START).status.succeeded
+    assert xip.solve(
+        compiled,
+        START,
+        variable_bounds=VARIABLE_BOUNDS,
+        constraint_bounds=CONSTRAINT_BOUNDS,
+    ).status.succeeded

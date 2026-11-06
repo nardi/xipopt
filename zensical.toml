@@ -12,9 +12,11 @@ nav = [
   { "Guide" = [
     { "Basic usage" = "guide/basic.md" },
     { "Parameters and warm starts" = "guide/parameters.md" },
+    { "Problem state" = "guide/problem-state.md" },
     { "Derivatives and sparsity" = "guide/derivatives.md" },
     { "Options and callbacks" = "guide/options.md" },
-    { "Saving and loading" = "guide/saving.md" },
+    { "Saved problems" = "guide/saving.md" },
+    { "Libraries with their own kernels" = "guide/libraries.md" },
     { "Performance" = "guide/performance.md" },
   ] },
   { "Design" = "design.md" },

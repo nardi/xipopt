@@ -1,4 +1,4 @@
-# Compiling and solving
+# Compilation and solving
 
 ::: xipopt.compile
 

@@ -1,6 +1,7 @@
 """Shared fixtures: the PJRT CPU plugin and a fresh disk cache."""
 
 import os
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -31,3 +32,31 @@ def runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[cyxla.RuntimeI
         del os.environ[cyxla.CACHE_ENVIRONMENT_VARIABLE]
     else:
         os.environ[cyxla.CACHE_ENVIRONMENT_VARIABLE] = previous
+
+
+@pytest.fixture(scope="session")
+def native_library_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Builds the library in `tests/native_library` with Meson and returns its path."""
+    build = tmp_path_factory.mktemp("native_library")
+    source = TESTS_DIRECTORY / "native_library"
+    include = Path(cyxla.get_include()[0])
+    for command in (
+        [
+            "meson",
+            "setup",
+            str(build),
+            str(source),
+            "--vsenv",
+            "--buildtype=release",
+            f"-Dcyxla_include={include}",
+        ],
+        ["meson", "compile", "-C", str(build)],
+    ):
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+    (path,) = [
+        path
+        for path in build.iterdir()
+        if "native_functions" in path.name and path.suffix in (".so", ".dylib", ".dll")
+    ]
+    return path
