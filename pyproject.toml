@@ -62,7 +62,7 @@ build = [
     "patchelf; sys_platform == 'linux'",
 ]
 # The documentation site. The API reference reads the source, so it needs no build.
-docs = ["zensical>=0.0.73", "mkdocstrings-python>=2"]
+docs = ["zensical>=0.1.0", "mkdocstrings-python>=2"]
 
 [tool.uv]
 default-groups = ["build", "dev"]
