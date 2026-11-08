@@ -9,8 +9,8 @@ uv sync
 uv run pytest
 ```
 
-The tests are in two groups. The unit tests in `tests/unit` solve small problems and cover
-all the code, and `uv run pytest -m unit` runs only them. The integration tests in
+The tests come in two groups: the unit tests in `tests/unit` solve small problems and
+cover all the code, and `uv run pytest -m unit` runs only them. The integration tests in
 `tests/integration` compare with SciPy, solve published problems and start new processes,
 and the code blocks of the README and of these pages count as integration tests as well.
 Run them with `uv run pytest -m integration`.
@@ -18,7 +18,7 @@ Run them with `uv run pytest -m integration`.
 `uv sync` builds the extension module in editable mode. Meson downloads the `meson-jll`
 tool and the JLL libraries during the first configuration. The unit tests need 100%
 coverage, including the Cython module, whose lines the development build traces. The code
-blocks of the README and of these pages carry a `<!-- name: test_... -->` comment.
+blocks of the README and of these pages have a `<!-- name: test_... -->` comment.
 
 ```bash
 uv run ruff check
@@ -37,17 +37,17 @@ uv pip install --no-config --no-deps --no-build-isolation --reinstall -e . \
 
 ## Layout
 
-- `src/xipopt/_solver.py` is the Cython module in pure Python mode. `_solver.pxd` holds
-  the state that the callbacks share, `_ipopt.pxd` declares the C interface of Ipopt and
-  `_solver.pyi` types the part that Python sees.
-- `_platform.h` holds the operating system calls, so the module stays portable.
-- `_compile.py` builds a problem, `_programs.py` holds the functions and derivatives it
-  compiles, `_patterns.py` converts sparsity patterns and `_cache.py` keys the disk
-  cache. `_solve.py` runs a solve and `_layout.py` flattens pytrees.
+- `src/xipopt/_solver.py` is the Cython module in pure Python mode. `_solver.pxd`
+  declares the state that the callbacks share, `_ipopt.pxd` declares the C interface of
+  Ipopt and `_solver.pyi` types the part that Python code imports.
+- `_platform.h` contains the operating system calls, so the module stays portable.
+- `_compile.py` builds a problem, `_programs.py` defines the functions and derivatives
+  it compiles, `_patterns.py` converts sparsity patterns and `_cache.py` computes the
+  keys of the disk cache. `_solve.py` runs a solve and `_layout.py` flattens pytrees.
 - `build_backend/xipopt_build.py` wraps meson-python. Meson reads the wraps of
   `subprojects` before `meson-jll sync` has written them, so the backend configures the
   project once in a scratch directory to write them first.
-- `licenses/` holds the licenses of the libraries that the wheels bundle.
+- `licenses/` contains the licenses of the libraries that the wheels bundle.
 
 ## Conventions
 
