@@ -2,8 +2,9 @@
 
 Compiling a problem traces its functions, finds the sparsity of the derivatives, lowers
 the programs and compiles them. With the [disk cache](parameters.md), a machine that has
-compiled the problem before skips most of this. Loading a saved file skips most of it on
-every machine. `save` writes a compiled problem to a file, and `load` reads it in
+compiled the problem before skips tracing the derivatives, the sparsity detection and
+the compilation. Loading a saved file skips all four steps on a machine that matches the
+one that saved it. `save` writes a compiled problem to a file, and `load` reads it in
 another process, on another machine, or later, without tracing, detecting sparsity or
 compiling anything.
 

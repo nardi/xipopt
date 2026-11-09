@@ -85,5 +85,6 @@ variables, and it does not prove that its solution is globally optimal.
 global optimality, which takes longer per problem.
 
 The programs run on the CPU, because Ipopt's callbacks write the inputs into the buffers
-of the plugin and read the outputs from them in place, which requires host memory.
+of the plugin and read the outputs from them in place, so the buffers must be in host
+memory.
 xipopt does not run programs on a GPU.
