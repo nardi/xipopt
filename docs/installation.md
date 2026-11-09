@@ -9,34 +9,33 @@ Apple silicon and Windows (x86-64). JAX publishes no recent wheels for Intel Mac
 there are none for xipopt either. The wheels contain Ipopt 3.14 with the sparse linear
 solvers MUMPS and SPRAL, OpenBLAS and the runtime libraries of the compiler, so the
 system needs no Ipopt or BLAS. [cyxla](https://nardi.github.io/cyxla/) and its CPU
-plugin come as dependencies, which means nothing downloads at run time.
+plugin are installed as dependencies, so nothing is downloaded at run time.
 
 ## Python and JAX versions
 
 xipopt works with JAX 0.10 and 0.11. Release 0.5.2 of
 [asdex](https://pypi.org/project/asdex/), which detects sparsity, needs Python 3.12 and
-JAX 0.11, and does not import on JAX 0.12. Python 3.11 therefore installs JAX 0.10 and
-release 0.5.1 of asdex, which has the same interface for everything xipopt uses. The
-PJRT plugin of cyxla is a build of XLA 0.12 and compiles the StableHLO that these
-versions of JAX export.
+JAX 0.11, and does not import on JAX 0.12. On Python 3.11, JAX 0.10 and release 0.5.1 of
+asdex are therefore installed instead. Release 0.5.1 has the same interface for
+everything xipopt uses. The PJRT plugin of cyxla is a build of XLA 0.12 and compiles the
+StableHLO that these versions of JAX export.
 
 ## Licenses
 
 xipopt itself is under the Hippocratic License 3.0. The wheels also contain Ipopt
 (Eclipse Public License 2.0), MUMPS (CeCILL-C), SPRAL, METIS, OpenBLAS and a few smaller
-libraries, each under its own license. Every wheel contains a copy of them in its
-metadata, and the [licenses
-directory](https://github.com/nardi/xipopt/tree/main/licenses) of the repository lists
-them.
+libraries, each under its own license. Every wheel contains the texts of these licenses
+in its metadata, and they are also in the [licenses
+directory](https://github.com/nardi/xipopt/tree/main/licenses) of the repository.
 
 ## Source builds
 
 The extension module links the Ipopt library of the
 [Ipopt_jll](https://github.com/JuliaBinaryWrappers/Ipopt_jll.jl) package that Julia
-publishes. [meson-jll](https://nardi.github.io/meson-jll/) turns it into Meson wraps.
-The repository commits only the lock file `subprojects/meson-jll.lock.wrap`, and the
+publishes. [meson-jll](https://nardi.github.io/meson-jll/) converts it into Meson wraps.
+The repository contains only the lock file `subprojects/meson-jll.lock.wrap`, and the
 first configuration downloads `meson-jll` from its release and writes the wraps. You
-need a C compiler, and Meson fetches the rest.
+need a C compiler, and Meson downloads the other dependencies.
 
 ```bash
 git clone https://github.com/nardi/xipopt

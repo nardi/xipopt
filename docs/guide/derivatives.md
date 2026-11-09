@@ -3,7 +3,7 @@
 Ipopt needs the gradient of the objective, the Jacobian of the constraints and the
 Hessian of the Lagrangian. The last two are matrices, and for most large problems they
 are mostly zeros. Ipopt stores and factorizes only their nonzero entries, so a problem
-solves faster when xipopt reports where those are.
+is solved faster when xipopt passes the positions of those entries to Ipopt.
 
 ## Compiled programs
 
@@ -15,15 +15,16 @@ xipopt compiles two programs from `Problem.evaluate`.
 | `eval_h` | The Hessian of the Lagrangian, at the nonzero entries of its lower triangle |
 
 The first program differentiates the objective and the constraints together, so work
-that they share is differentiated once, and the values come out of the same pass. The
-Jacobian comes from forward mode, which takes one Jacobian-vector product for each
+that they share is differentiated once, and the values are computed in the same pass.
+The Jacobian comes from forward mode, which takes one Jacobian-vector product for each
 variable, or from reverse mode, which takes one vector-Jacobian product for each output.
 xipopt uses the mode that needs fewer products for the shape of the problem. With a
-sparsity pattern, one product covers every column or row of the same color.
+sparsity pattern, one product computes all columns or rows of the same color.
 
 The Lagrangian is `factor * objective + multipliers @ constraints`, with the factor and
-the multipliers as inputs of the program. The entries of the Jacobian and the Hessian
-come out in a fixed order that the program and the structure given to Ipopt share.
+the multipliers as inputs of the program. The program returns the entries of the
+Jacobian and the Hessian in a fixed order, and the structure passed to Ipopt lists them
+in the same order.
 
 ## Detection
 
@@ -74,20 +75,21 @@ assert compiled.structure.hessian_rows.size == 2 * SIZE
 The Jacobian of this problem has three entries per row for the state and one for the
 control, and the Hessian is diagonal. A dense Jacobian would have `8 * 16` entries.
 
-Dictionaries flatten in the order of their keys, so the control `c` comes before the
-state `u` in the columns of the Jacobian. Patterns use the order of the flattened
-variables, and the rows are the entries of the constraints in order.
+Dictionaries are flattened in the order of their sorted keys, so the control `c` comes
+before the state `u` in the columns of the Jacobian. The columns of a pattern are in the
+order of the flattened variables, and the rows are the entries of the constraints in
+order.
 
 ## Given patterns
 
 Detection traces the functions with abstract values, so not every function can be
-traced, and it costs time on a large problem. A problem can give the patterns itself as
-`jacobian_pattern` and `hessian_pattern`, in any of four forms.
+traced, and it takes time on a large problem. A problem can specify the patterns itself
+as `jacobian_pattern` and `hessian_pattern`, in any of four forms.
 
 - A boolean matrix.
 - A pair of integer vectors `(rows, columns)`.
 - An `asdex.SparsityPattern`.
-- A `jax.experimental.sparse.BCOO` matrix, whose stored entries count as nonzero.
+- A `jax.experimental.sparse.BCOO` matrix, whose stored entries are treated as nonzero.
 
 A Hessian pattern is square, and it may list one triangle or both. xipopt uses the lower
 triangle, which is the part that Ipopt uses.
@@ -120,14 +122,14 @@ assert np.max(np.abs(solution.constraints[0])) < 1e-6
 ```
 
 A pattern has to include every entry that can be nonzero. An entry that is left out is
-not computed, and the solve then runs on a wrong derivative without any error. Extra
-entries only cost time.
+not computed, and the solve then uses a wrong derivative without raising an error. Extra
+entries only make the solve slower.
 
 ## Failed detection
 
-Some functions are beyond what asdex can trace. A linear solve is one. In that case
-compiling raises a [`SparsityDetectionError`][xipopt.SparsityDetectionError] that names
-the ways out, and xipopt does not pick one for you:
+asdex cannot trace some functions, such as a linear solve. In that case compiling raises
+a [`SparsityDetectionError`][xipopt.SparsityDetectionError] that lists the alternatives,
+and xipopt does not choose one automatically:
 
 - Give the patterns of the problem, as above.
 - Use `CompileOptions(derivatives=Derivatives.DENSE)`, which differentiates densely with
@@ -136,15 +138,15 @@ the ways out, and xipopt does not pick one for you:
   Hessian from gradients. No Hessian program is compiled, and the solve takes more
   iterations.
 
-The third choice changes the algorithm and its convergence, which is why it is not made
-silently. A dense pattern is not an error. It only means that the problem is as costly
-as a dense one.
+The third choice changes the algorithm and its convergence, which is why xipopt does not
+choose it automatically. A detected pattern that is dense does not raise an error. The
+solve is then as slow as for a dense problem.
 
 ## Derivatives without asdex
 
-asdex is a dependency, so it is normally there. When someone has uninstalled it,
+asdex is a dependency, so it is normally installed. When it is not installed,
 `Derivatives.AUTOMATIC` computes dense derivatives and compiling warns.
-`Derivatives.SPARSE` raises an `ImportError` instead, and `Derivatives.DENSE` is the
-explicit choice. Dense derivatives still use the entries of a given pattern, so a
-problem that gives its patterns gets sparse structure for Ipopt. Only the evaluation is
-dense, which suits problems of a few hundred variables.
+`Derivatives.SPARSE` raises an `ImportError` instead, and `Derivatives.DENSE` selects
+dense derivatives explicitly. Dense derivatives still use the entries of a given
+pattern, so Ipopt receives a sparse structure for a problem that specifies its patterns.
+Only the evaluation is dense, which suits problems of a few hundred variables.

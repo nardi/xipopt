@@ -6,10 +6,10 @@ problems with smooth objectives and constraints.
 
 A problem is a pytree of variables, an objective and constraints. Ipopt needs the
 values, gradients, Jacobians and Hessians of those functions many times per solve, and
-as a solver written in C it asks for each of them through a callback. xipopt compiles
-the functions and their derivatives with [cyxla](https://nardi.github.io/cyxla/) into
-programs for the PJRT C API. Ipopt's callbacks execute those programs directly from
-Cython, so a solve does not call back into Python.
+it calls a callback function for each of them. xipopt compiles the functions and their
+derivatives with [cyxla](https://nardi.github.io/cyxla/) into programs for the PJRT C
+API. Ipopt's callbacks execute those programs directly from Cython, so a solve does not
+call back into Python.
 
 The API follows [JAX-CIP](https://nardi.github.io/jax-cip/), which does the same for the
 global solver SCIP.
@@ -63,7 +63,7 @@ assert abs(solution.objective - 17.0140173) < 1e-6
 ```
 
 `solve` compiles the problem first. Compiling takes about a second for a small problem,
-and the [disk cache](guide/parameters.md) makes later processes skip most of that.
+and later processes load most of the result from the [disk cache](guide/parameters.md).
 Compile once with `compile` to solve the same problem again and again.
 
 ## Supported problems
@@ -71,7 +71,7 @@ Compile once with `compile` to solve the same problem again and again.
 - Any JAX function that is smooth where Ipopt evaluates it. The functions may use
   control flow such as `lax.scan`, and anything else that cyxla can lower.
 - Variables and parameters as pytrees. The bounds are passed to each solve, so one
-  compiled problem serves many sets of bounds.
+  compiled problem can be solved with many sets of bounds.
 - Equality and inequality constraints of any shape, which Ipopt receives as one vector.
 - Sparse Jacobians and Hessians, found by [asdex](https://pypi.org/project/asdex/) or
   given as patterns. The [derivatives guide](guide/derivatives.md) explains both.
@@ -79,10 +79,12 @@ Compile once with `compile` to solve the same problem again and again.
 
 ## Unsupported problems
 
-Ipopt finds a local solution of a continuous problem. It has no integer variables, and
-it does not prove that its solution is globally optimal.
-[JAX-CIP](https://nardi.github.io/jax-cip/) covers mixed-integer problems and global
-optimality, at a higher cost per problem.
+Ipopt finds a local solution of a continuous problem. It does not support integer
+variables, and it does not prove that its solution is globally optimal.
+[JAX-CIP](https://nardi.github.io/jax-cip/) supports mixed-integer problems and proves
+global optimality, which takes longer per problem.
 
-The programs run on the CPU, because Ipopt's callbacks share memory with the plugin
-without copies. There is no GPU path.
+The programs run on the CPU, because Ipopt's callbacks write the inputs into the buffers
+of the plugin and read the outputs from them in place, so the buffers must be in host
+memory.
+xipopt does not run programs on a GPU.
