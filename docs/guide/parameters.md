@@ -1,8 +1,8 @@
 # Parameters and warm starts
 
 The functions of a problem may depend on data that changes between solves, such as the
-prices in a portfolio or the target of a tracking problem. Passing the data as
-parameters keeps the compiled programs valid for all of it.
+prices in a portfolio or the target of a tracking problem. When the data is passed as
+parameters, one compiled problem can be solved for all of its values.
 
 ## Parameters
 
@@ -57,16 +57,16 @@ The bounds are not part of the compiled problem. They are passed to `solve` on e
 call, so they can change between solves as the parameters do. A bound that depends on
 data needs no rewrite of the function.
 
-The programs hold all values as `float64`. A parameter of another type, such as an
-integer count, is converted to `float64` before it enters the program and back to its
-own type inside the function, so integers up to 2^53 survive exactly.
+The programs represent all values as `float64`. A parameter of another type, such as an
+integer count, is converted to `float64` in the input of the program and back to its own
+type inside the function, so integers up to 2^53 are represented exactly.
 
 ## Warm starts
 
 Parameters that change slightly between solves give solutions that are close to each
-other. Starting the next solve from the previous point and its multipliers saves
-iterations. Pass the earlier [`Solution`][xipopt.Solution] as `warm_start` and its point
-as the start:
+other. Starting the next solve from the previous point and its multipliers reduces the
+number of iterations. Pass the earlier [`Solution`][xipopt.Solution] as `warm_start` and
+its point as the start:
 
 <!-- name: test_docs_parameters -->
 ```python
@@ -104,20 +104,20 @@ assert warm.status.succeeded
 
 A warm start sets Ipopt's `warm_start_init_point` to `yes`. Ipopt pushes the starting
 point away from its bounds by default, which undoes most of the benefit of a good start,
-so the settings above make the push small. The values suit a small change of the
-parameters and are a starting point for tuning, as [Ipopt's
+so the settings above set the push to a small value. The values suit a small change of
+the parameters and are a starting point for tuning, as [Ipopt's
 documentation](https://coin-or.github.io/Ipopt/OPTIONS.html) describes.
 
 ## The disk cache
 
-Lowering and compiling dominate the time of a first solve. Both are stored in the
-directory of the cyxla cache, which is `~/.cache/cyxla` unless `CYXLA_CACHE_DIR` says
-otherwise. The key includes the traced functions with the values of the constants they
-capture, the sparsity patterns that the problem gives, the compile options and the
-versions of JAX, cyxla, xipopt and asdex. Executables also depend on the loaded plugin.
-A second process that builds the same problem skips tracing the derivatives, the
-sparsity detection and the compilation.
+Lowering and compiling take most of the time of a first solve. The results of both are
+stored in the directory of the cyxla cache, which is `~/.cache/cyxla` unless
+`CYXLA_CACHE_DIR` is set. The key includes the traced functions with the values of the
+constants they capture, the sparsity patterns that the problem gives, the compile
+options and the versions of JAX, cyxla, xipopt and asdex. The key of an executable also
+includes the loaded plugin. A second process that builds the same problem skips tracing
+the derivatives, the sparsity detection and the compilation.
 
 `CompileOptions(disk_cache=False)` turns the cache off. The `build` field of a
-[`Solution`][xipopt.Solution] and the `statistics` of a compiled problem count the
-programs that were lowered, compiled and loaded.
+[`Solution`][xipopt.Solution] and the `statistics` of a compiled problem contain the
+number of programs that were lowered, compiled and loaded.

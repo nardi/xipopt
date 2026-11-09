@@ -14,7 +14,8 @@ Software:
 - [Ipopt](https://github.com/coin-or/Ipopt), with the [options
   reference](https://coin-or.github.io/Ipopt/OPTIONS.html).
 - [asdex](https://pypi.org/project/asdex/), automatic sparse differentiation in JAX.
-- [cyxla](https://nardi.github.io/cyxla/), which runs JAX functions from native code.
-- [JAX-CIP](https://nardi.github.io/jax-cip/), the same idea for the SCIP solver.
-- [meson-jll](https://nardi.github.io/meson-jll/), which turns Julia binary packages
+- [cyxla](https://nardi.github.io/cyxla/), which executes compiled JAX functions from
+  native code.
+- [JAX-CIP](https://nardi.github.io/jax-cip/), the same interface for the SCIP solver.
+- [meson-jll](https://nardi.github.io/meson-jll/), which converts Julia binary packages
   into Meson wraps.

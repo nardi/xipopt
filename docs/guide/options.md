@@ -1,8 +1,8 @@
 # Options and callbacks
 
 [`SolveOptions`][xipopt.SolveOptions] holds the settings of one solve. They apply to a
-single call, so a compiled problem solves with different options without compiling
-again.
+single call, so a compiled problem can be solved with different options without
+compiling again.
 
 ## Common options
 
@@ -43,13 +43,13 @@ assert solution.status.succeeded
   default. SPRAL runs in parallel with OpenMP, so it can be faster for large problems.
 - `print_level` is Ipopt's, from 0 to 12. Ipopt prints through the C library, so the
   output does not go through Python's `sys.stdout`. The default 0 prints nothing.
-- `blas_threads` sets the threads of OpenBLAS, one by default. The linear algebra calls
-  of a sparse factorization are small, and a single thread avoids the cost of
-  coordinating many. Pass `None` to skip setting the thread count.
+- `blas_threads` sets the number of OpenBLAS threads, one by default. The linear algebra
+  calls of a sparse factorization are small, and a single thread avoids the overhead of
+  synchronizing many. Pass `None` to skip setting the thread count.
 
-Any other option of Ipopt goes in `settings`, as a name and a value of type `str`, `int`
-or `float`. Ipopt's [option list](https://coin-or.github.io/Ipopt/OPTIONS.html) has them
-all. The settings apply after the fields above, so they can override those.
+Any other option of Ipopt is passed in `settings`, as a name and a value of type `str`,
+`int` or `float`. Ipopt's [option list](https://coin-or.github.io/Ipopt/OPTIONS.html)
+has them all. The settings are applied after the fields above, so they override them.
 
 <!-- name: test_docs_options -->
 ```python
@@ -73,9 +73,9 @@ Ipopt rejects an unknown name or a value that does not fit, and `solve` then rai
 ## Iteration callback
 
 `SolveOptions(callback=...)` takes a function that Ipopt calls at the end of every
-iteration with an [`IterationInfo`][xipopt.IterationInfo]. It reports the iteration, the
-objective, the infeasibilities, the barrier parameter, the step sizes and the current
-point in the structure of the variables. Returning `False` stops the solve with
+iteration with an [`IterationInfo`][xipopt.IterationInfo]. It contains the iteration,
+the objective, the infeasibilities, the barrier parameter, the step sizes and the
+current point in the structure of the variables. Returning `False` stops the solve with
 `Status.USER_REQUESTED_STOP`, and returning nothing continues. An exception ends the
 solve and is raised from `solve`.
 
@@ -103,17 +103,17 @@ assert solution.status is xip.Status.USER_REQUESTED_STOP
 assert history[-1][0] == 5
 ```
 
-The callback runs with the GIL, so it is the one place where a solve enters Python.
+The callback runs with the GIL, so it is the one place where a solve runs Python code.
 Without a callback Ipopt only counts the iterations.
 
 ## Statistics
 
-A [`Solution`][xipopt.Solution] counts the callbacks that Ipopt made and the executions
-of the programs. `statistics` has, for each of the five callbacks, the number of calls
-and how many of them were answered from an earlier execution at the same point. It also
-has the executions and the seconds of the first-order program and of the Hessian
-program, and the number of points at which derivatives were computed and never asked
-for.
+A [`Solution`][xipopt.Solution] contains the number of callbacks that Ipopt made and of
+executions of the programs. `statistics` has, for each of the five callbacks, the number
+of calls and how many of them used the outputs of an earlier execution at the same
+point. It also has the executions and the seconds of the first-order program and of the
+Hessian program, and the number of points at which derivatives were computed and never
+used.
 
 <!-- name: test_docs_options -->
 ```python

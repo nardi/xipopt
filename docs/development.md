@@ -11,14 +11,15 @@ uv run pytest
 
 The tests come in two groups: the unit tests in `tests/unit` solve small problems and
 cover all the code, and `uv run pytest -m unit` runs only them. The integration tests in
-`tests/integration` compare with SciPy, solve published problems and start new processes,
-and the code blocks of the README and of these pages count as integration tests as well.
-Run them with `uv run pytest -m integration`.
+`tests/integration` compare results with SciPy, solve published problems and start new
+processes, and the code blocks of the README and of these pages are integration tests as
+well. Run them with `uv run pytest -m integration`.
 
 `uv sync` builds the extension module in editable mode. Meson downloads the `meson-jll`
-tool and the JLL libraries during the first configuration. The unit tests need 100%
-coverage, including the Cython module, whose lines the development build traces. The code
-blocks of the README and of these pages have a `<!-- name: test_... -->` comment.
+tool and the JLL libraries during the first configuration. The unit tests must reach
+100% coverage, including the Cython module, whose lines the development build traces.
+The code blocks of the README and of these pages have a `<!-- name: test_... -->`
+comment.
 
 ```bash
 uv run ruff check
@@ -39,15 +40,16 @@ uv pip install --no-config --no-deps --no-build-isolation --reinstall -e . \
 
 - `src/xipopt/_solver.py` is the Cython module in pure Python mode. `_solver.pxd`
   declares the state that the callbacks share, `_ipopt.pxd` declares the C interface of
-  Ipopt and `_solver.pyi` types the part that Python code imports.
-- `_platform.h` contains the operating system calls, so the module stays portable.
+  Ipopt and `_solver.pyi` contains the type stubs of the part that Python code imports.
+- `_platform.h` contains the operating system calls, so the rest of the module is
+  portable.
 - `_compile.py` builds a problem, `_programs.py` defines the functions and derivatives
   it compiles, `_patterns.py` converts sparsity patterns and `_cache.py` computes the
   keys of the disk cache. `_solve.py` runs a solve and `_layout.py` flattens pytrees.
 - `build_backend/xipopt_build.py` wraps meson-python. Meson reads the wraps of
   `subprojects` before `meson-jll sync` has written them, so the backend configures the
   project once in a scratch directory to write them first.
-- `licenses/` contains the licenses of the libraries that the wheels bundle.
+- `licenses/` contains the licenses of the libraries in the wheels.
 
 ## Conventions
 
@@ -62,7 +64,7 @@ uv pip install --no-config --no-deps --no-build-isolation --reinstall -e . \
 
 One workflow tests on Linux, macOS and Windows with the oldest and the newest supported
 Python, lints, type checks, builds wheels with cibuildwheel for every platform and
-builds the source distribution. A tag `vX.Y.Z` that matches the version in
-`pyproject.toml` publishes to PyPI through trusted publishing, and so does a manual run
-with the release input. A second workflow builds this site and deploys it to GitHub
-Pages.
+builds the source distribution. Pushing a tag `vX.Y.Z` that matches the version in
+`pyproject.toml` publishes the package to PyPI through trusted publishing, and so does a
+manual run with the release input. A second workflow builds this site and deploys it to
+GitHub Pages.

@@ -34,7 +34,7 @@ value, or uses [`no_objective`][xipopt.no_objective] as its objective function, 
 `solve` then finds a point that satisfies the bounds and the constraints.
 
 `Evaluation.constraints` is a pytree of arrays. Every entry of every array is one
-constraint, and the [bounds section](#bounds) explains how to give its bounds.
+constraint, and the [bounds section](#bounds) explains how to pass its bounds.
 
 <!-- name: test_docs_basic -->
 ```python
@@ -51,9 +51,9 @@ problem = xip.Problem(variables=variables, evaluate=evaluate)
 
 Separate functions for the objective and each constraint also work. Pass them as
 `objective` and `constraints` to [`Problem`][xipopt.Problem], which builds `evaluate`
-from them with [`evaluation_from_functions`][xipopt.evaluation_from_functions]. Writing
-one function lets the objective and the constraints share work, as [the guide on
-performance](performance.md) explains.
+from them with [`evaluation_from_functions`][xipopt.evaluation_from_functions]. In one
+function, the objective and the constraints can use the same intermediate results, as
+[the guide on performance](performance.md) explains.
 
 ## Bounds
 
@@ -63,13 +63,14 @@ and an `upper`, or a pytree with a `Bounds` at every leaf.
 
 In a `Bounds`, a bound is a number or an array, which broadcasts to every array. A bound
 can also be a pytree with the structure of the variables or of `Evaluation.constraints`,
-and each leaf of such a pytree broadcasts to the array at the same position. In a pytree
-of `Bounds`, the structure is the one of the variables or of `Evaluation.constraints`,
-and the `lower` and `upper` of each `Bounds` broadcast to the array at its position.
+and each leaf of such a pytree broadcasts to the array at the same position. A pytree of
+`Bounds` has the structure of the variables or of `Evaluation.constraints`, and the
+`lower` and `upper` of each `Bounds` broadcast to the array at its position.
 
 Equal bounds make an equality, and `-inf` and `inf` mean no bound. A problem with
-constraints needs `constraint_bounds`. A problem without constraints must not receive
-it. Passing `variable_bounds=None` leaves the variables unbounded.
+constraints needs `constraint_bounds`. For a problem without constraints,
+`constraint_bounds` must be omitted. Passing `variable_bounds=None` leaves the variables
+unbounded.
 
 The bounds are read when a solve starts, so one compiled problem can be solved with many
 sets of bounds.
@@ -130,11 +131,11 @@ variables, the objective in the sense of the problem, the values of the constrai
 the structure of `Evaluation.constraints`, and the multipliers of the constraints and
 the bounds. The `status` is Ipopt's return status. [`Status.succeeded`][xipopt.Status]
 is true when Ipopt found a point that meets its tolerances, or the looser acceptable
-ones. A failure such as `MAXIMUM_ITERATIONS_EXCEEDED` still returns the last point, so
-check the status before trusting `x`.
+ones. `solve` still returns the last point after a failure such as
+`MAXIMUM_ITERATIONS_EXCEEDED`, so check the status before trusting `x`.
 
-Ipopt reports the multipliers of the problem it solves, which minimizes the objective. A
-maximization therefore has the multipliers of its negated objective.
+Ipopt always minimizes, so the multipliers of a maximization are those of the
+minimization of the negated objective.
 
 ## Compilation
 
@@ -142,10 +143,10 @@ maximization therefore has the multipliers of its negated objective.
 functions, differentiates them and finds the sparsity of the derivatives. It then
 compiles two programs. The first-order program returns the objective, its gradient, the
 constraints and the Jacobian values in one pass. The Hessian program also takes the
-objective factor and the multipliers, which Ipopt supplies only with its Hessian call.
-The [design notes](../design.md#programs-and-callbacks) describe how the programs and
-the callbacks fit together. Do it once with [`compile`][xipopt.compile] when a problem
-is solved more than once:
+objective factor and the multipliers, which Ipopt passes only to its Hessian callback.
+The [design notes](../design.md#programs-and-callbacks) describe how the callbacks
+execute the programs. When a problem is solved more than once, compile it once with
+[`compile`][xipopt.compile]:
 
 <!-- name: test_docs_basic -->
 ```python
@@ -170,16 +171,17 @@ assert first.status.succeeded and second.status.succeeded
 print(compiled.statistics)
 ```
 
-The [`BuildStatistics`][xipopt.BuildStatistics] of a compiled problem say how long each
-step took. The programs run in 64-bit floats whatever the setting of `jax.enable_x64`
-is, and xipopt switches that setting on only while it traces and lowers the functions.
+The [`BuildStatistics`][xipopt.BuildStatistics] of a compiled problem contain the
+duration of each step. The programs run in 64-bit floats whatever the setting of
+`jax.enable_x64` is, and xipopt switches that setting on only while it traces and lowers
+the functions.
 
 ## Errors
 
 A function that returns the wrong shape, or a Jacobian without entries, raises a
 `ValueError` when the problem compiles. Bounds that do not broadcast to their arrays
 raise a `ValueError` when the solve starts, and so does a missing or unexpected
-`constraint_bounds`. Ipopt rejecting an option raises a `ValueError` when the solve
+`constraint_bounds`. An option that Ipopt rejects raises a `ValueError` when the solve
 starts. If a program fails while Ipopt runs, Ipopt shortens its step, and `solve` raises
 a `RuntimeError` with the message of the plugin only when the solve ends without
 success.

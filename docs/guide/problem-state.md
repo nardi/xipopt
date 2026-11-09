@@ -2,7 +2,7 @@
 
 Some functions contain an inner iteration, such as a Newton solve, whose result at one
 point is a good starting guess at the next. A `StatefulProblem` lets the evaluation read
-a state from the previous point and return a new one. xipopt keeps the state between
+a state from the previous point and return a new one. xipopt stores the state between
 evaluations, so the inner iteration starts close to its answer instead of from a fixed
 guess.
 
@@ -43,16 +43,16 @@ solution = xip.solve(problem, constraint_bounds=xip.Bounds(upper=2.0))
 assert solution.status.succeeded
 ```
 
-The inner iteration above takes five steps from the state. A step count that is enough
-from a good guess would not be enough from the fixed guess `1.0` at every point, which
-is what a `Problem` has to do.
+The inner iteration above takes five steps from the state. Five steps are enough from a
+good guess, but not from the fixed guess `1.0`, which a `Problem` has to use at every
+point.
 
 ## State updates
 
 Every successful execution of the first-order program replaces the state with the one
 that `evaluate` returned. The next execution reads it, whether that is at an accepted
 point or at a trial point that Ipopt later rejects. An execution that fails, or that
-returns an infinite or non-finite value, leaves the state as it was.
+returns a value that is not finite, leaves the state as it was.
 
 A solve starts from `StatefulProblem.state`. Passing a previous `Solution` as
 `warm_start` starts from its `Solution.state` instead.
@@ -68,14 +68,14 @@ second = xip.solve(
 assert second.iterations <= solution.iterations
 ```
 
-The Hessian program reads the state that the last first-order execution produced. It
-never changes it.
+The Hessian program reads the state that the last first-order execution returned. It
+never changes the state.
 
 ## Derivatives
 
 The state is a constant for all derivatives. The gradient, the Jacobian and the Hessian
-are taken with respect to `x` only, and nothing flows through the state into them. The
-derivatives therefore have the same meaning as for a `Problem` whose inner iteration
+are taken with respect to `x` only, and no derivative is propagated through the state.
+The derivatives therefore have the same meaning as for a `Problem` whose inner iteration
 starts from a fixed guess.
 
 ## Order-dependent results
@@ -89,7 +89,7 @@ a pure function of `x` and `params`.
 
 ## Saved problems
 
-A saved problem keeps its initial state. `load` and `loads` take a tree with the
+A saved problem contains its initial state. `load` and `loads` take a tree with the
 structure and shapes of the state as the keyword argument `state`, next to `constraints`
 for a problem with constraints.
 
@@ -103,4 +103,5 @@ loaded = xip.loads(
 )
 ```
 
-A problem without state takes none, and a stateful one refuses to load without it.
+A problem without state takes none, and loading a stateful problem without `state`
+raises an error.

@@ -3,9 +3,9 @@
 xipopt solves nonlinear optimization problems written as JAX functions with
 [Ipopt](https://coin-or.github.io/Ipopt/).
 
-A problem is a pytree of variables, an objective and constraints, all plain JAX
-functions. xipopt compiles the function values and their derivatives into programs for
-the [PJRT C API](https://openxla.org/xla/pjrt/pjrt_integration) through
+A problem consists of a pytree of variables and an objective and constraints that are
+plain JAX functions. xipopt compiles the function values and their derivatives into
+programs for the [PJRT C API](https://openxla.org/xla/pjrt/pjrt_integration) through
 [cyxla](https://nardi.github.io/cyxla/). Ipopt's callbacks execute those programs
 directly from Cython, so a solve never enters the Python interpreter. The API follows
 [JAX-CIP](https://nardi.github.io/jax-cip/).
@@ -66,5 +66,5 @@ the design and the API reference.
 
 ## License
 
-[Hippocratic License 3.0](LICENSE.md). The wheels bundle libraries under their own
-licenses, which [licenses](licenses) lists.
+[Hippocratic License 3.0](LICENSE.md). The wheels contain libraries under their own
+licenses, which are listed in [licenses](licenses).

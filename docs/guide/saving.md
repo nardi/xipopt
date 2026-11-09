@@ -1,10 +1,11 @@
 # Saved problems
 
 Compiling a problem traces its functions, finds the sparsity of the derivatives, lowers
-the programs and compiles them. The [disk cache](parameters.md) shortens this on a
-machine that has done it before. Saving to a file shortens it on every machine. `save`
-writes a compiled problem to a file, and `load` reads it in another process, on another
-machine, or later, without tracing, detecting sparsity or compiling anything.
+the programs and compiles them. With the [disk cache](parameters.md), a machine that has
+compiled the problem before skips most of this. Loading a saved file skips most of it on
+every machine. `save` writes a compiled problem to a file, and `load` reads it in
+another process, on another machine, or later, without tracing, detecting sparsity or
+compiling anything.
 
 ## Saved files
 
@@ -82,10 +83,10 @@ without state takes none.
 
 ## Other machines
 
-A file stores one executable, the one of the machine that saved it, together with the
-StableHLO of every program. A machine with the same operating system, architecture and
-plugin version loads the executable directly. On any other machine the plugin cannot use
-it, and `load` compiles the StableHLO instead. That costs about as long as the
+A file contains one executable, compiled for the machine that saved it, together with
+the StableHLO of every program. A machine with the same operating system, architecture
+and plugin version loads the executable directly. On any other machine the plugin cannot
+use it, and `load` compiles the StableHLO instead. This takes about as long as the
 compilation of a problem without the lowering and the sparsity detection. Pass
 `on_mismatch="raise"` to get a `cyxla.TargetMismatchError` in that case.
 
@@ -98,13 +99,14 @@ Loading does not import asdex or numba, does not call the functions of the probl
 does not trace anything. With `warm_up=True`, which is the default, it runs each program
 once, so that the first solve is as fast as the later ones. For a problem with 400
 variables a load took about 50 ms, while compiling it without a cache took about 1.5 s.
-Importing xipopt and JAX is the remaining cost of a new process, about 0.9 s.
+Importing xipopt and JAX then takes most of the start-up time of a new process, about
+0.9 s.
 
 ## Trust
 
 A file contains machine code, which the plugin runs when it loads the executable. Load
-only files from a source that you trust. The file protects against damage with
-checksums, and it does not protect against someone who writes one on purpose.
+only files from a source that you trust. The file contains checksums that detect
+corruption, but they do not protect against a file that was crafted on purpose.
 
 A compiled problem cannot be pickled, because the trees are not part of the file. Send
 the bytes of `dumps` to a worker and call `loads` there with the trees.
